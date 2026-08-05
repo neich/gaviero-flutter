@@ -11,6 +11,7 @@ import 'composer.dart';
 import 'conversation_drawer.dart';
 import 'message_widgets.dart';
 import 'permission_card.dart';
+import 'review_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final RemoteController controller;
@@ -63,6 +64,21 @@ class _ChatScreenState extends State<ChatScreen> {
                           ?.copyWith(color: Colors.white54)),
               ],
             ),
+            actions: [
+              if (controller.state.openProposals.isNotEmpty)
+                IconButton(
+                  tooltip: 'Review proposals',
+                  icon: Badge.count(
+                    count: controller.state.openProposals.length,
+                    child: const Icon(Icons.rule),
+                  ),
+                  onPressed: () =>
+                      Navigator.of(context).push(MaterialPageRoute(
+                    builder: (context) =>
+                        ReviewListScreen(controller: controller),
+                  )),
+                ),
+            ],
           ),
           body: Column(
             children: [
