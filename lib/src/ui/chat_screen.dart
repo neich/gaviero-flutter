@@ -83,6 +83,7 @@ class _ChatScreenState extends State<ChatScreen> {
           body: Column(
             children: [
               ConnectionBanner(connection: controller.connection),
+              if (conv != null) StatusStrip(conv: conv),
               Expanded(
                 child: conv == null
                     ? const Center(child: Text('No conversation'))
@@ -153,6 +154,76 @@ class _MessageList extends StatelessWidget {
       },
     );
   }
+}
+
+/// B10 status surfaces: context pressure, token usage, and cost for the
+/// active conversation. Hidden entirely until the server has sent any of
+/// them.
+class StatusStrip extends StatelessWidget {
+  final ConversationData conv;
+
+  const StatusStrip({super.key, required this.conv});
+
+  @override
+  Widget build(BuildContext context) {
+    final pressure = conv.summary.contextPressure;
+    final usage = conv.lastUsage;
+    final cost = conv.lastTurnCostUsd;
+    if (pressure == null && usage == null && cost == null) {
+      return const SizedBox.shrink();
+    }
+    final labelStyle = Theme.of(context)
+        .textTheme
+        .labelSmall
+        ?.copyWith(color: Colors.white54);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Row(
+        children: [
+          if (pressure != null) ...[
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: pressure.ratio.clamp(0.0, 1.0),
+                      minHeight: 4,
+                      backgroundColor: Colors.white12,
+                      color: pressure.ratio > 0.85
+                          ? Colors.orangeAccent
+                          : Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text('${(pressure.ratio * 100).round()}%',
+                      style: labelStyle),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
+          if (usage != null) ...[
+            Text('▲${_compact(usage.inputTokens)} ▼${_compact(usage.outputTokens)}',
+                style: labelStyle),
+            const SizedBox(width: 12),
+          ],
+          if (cost != null)
+            Text(
+                '\$${cost.toStringAsFixed(3)}'
+                ' · Σ\$${conv.sessionCostUsd.toStringAsFixed(2)}',
+                style: labelStyle),
+        ],
+      ),
+    );
+  }
+}
+
+String _compact(int n) {
+  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k';
+  return '$n';
 }
 
 /// §3.7 surfaces: every abnormal connection state gets a distinct, calm

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'src/services/notifications.dart';
 import 'src/state/controller.dart';
 import 'src/transport/connection.dart';
 import 'src/ui/chat_screen.dart';
@@ -21,17 +22,23 @@ class GavieroRemoteApp extends StatefulWidget {
 class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     with WidgetsBindingObserver {
   late final RemoteController _controller;
+  final _notifications = NotificationService();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _controller = RemoteController();
+    _controller.state.onPermissionRequested =
+        _notifications.onPermissionRequested;
+    _controller.state.onStreamingEnded = _notifications.onStreamingEnded;
+    _notifications.initialize();
     _controller.initialize();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _notifications.appIsForeground = state == AppLifecycleState.resumed;
     // Backgrounding kills the socket after the server's 60 s idle cull —
     // routine, not an error. Reconnect silently on resume (§3.7).
     if (state == AppLifecycleState.resumed) {
