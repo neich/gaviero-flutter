@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../protocol/version.dart';
 import '../services/secure_store.dart';
 import '../state/controller.dart';
+import 'scanner_screen.dart';
 
 class PairingScreen extends StatefulWidget {
   final RemoteController controller;
@@ -109,9 +110,19 @@ class PairingScreenState extends State<PairingScreen> {
     );
   }
 
-  /// Overridden by the B9 scanner build; the base form is camera-free.
-  Widget buildScannerSection(BuildContext context) =>
-      const SizedBox.shrink();
+  Widget buildScannerSection(BuildContext context) => FilledButton.icon(
+        icon: const Icon(Icons.qr_code_scanner),
+        label: const Text('Scan QR code'),
+        onPressed: _busy
+            ? null
+            : () async {
+                final raw = await Navigator.of(context).push<String>(
+                  MaterialPageRoute(
+                      builder: (context) => const ScannerScreen()),
+                );
+                if (raw != null) await submitPayload(raw);
+              },
+      );
 
   @override
   void dispose() {
