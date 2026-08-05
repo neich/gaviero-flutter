@@ -10,6 +10,7 @@ import '../transport/connection.dart';
 import 'composer.dart';
 import 'conversation_drawer.dart';
 import 'message_widgets.dart';
+import 'permission_card.dart';
 
 class ChatScreen extends StatefulWidget {
   final RemoteController controller;
@@ -71,6 +72,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? const Center(child: Text('No conversation'))
                     : _MessageList(conv: conv, scroll: _scroll),
               ),
+              if (controller.state.openPermissions.isNotEmpty)
+                PermissionCard(
+                  controller: controller,
+                  request: controller.state.openPermissions.first,
+                ),
               Composer(controller: controller),
             ],
           ),
