@@ -8,6 +8,7 @@ import '../state/app_state.dart';
 import '../state/controller.dart';
 import '../transport/connection.dart';
 import 'composer.dart';
+import 'conversation_drawer.dart';
 import 'message_widgets.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -46,6 +47,7 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context, _) {
         final conv = controller.state.active;
         return Scaffold(
+          drawer: ConversationDrawer(controller: controller),
           appBar: AppBar(
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
