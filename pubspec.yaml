@@ -1,0 +1,26 @@
+name: gaviero_remote
+description: "Gaviero Remote — mobile mirror of the gaviero agent chat panel."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Pins verified on pub.dev 2026-08-01 (PLAN.md §2). Do not swap for
+  # flutter_markdown / qr_code_scanner / flutter_highlight — see PLAN.md §2.1.
+  web_socket_channel: ^3.0.3
+  gpt_markdown: ^1.1.8
+  flutter_secure_storage: ^10.3.1
+  mobile_scanner: ^7.4.0
+  flutter_local_notifications: ^22.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
