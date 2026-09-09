@@ -1,3 +1,64 @@
-# gaviero_remote
+# Gaviero Remote
 
-A new Flutter project.
+Android (and iOS-capable) client for the gaviero TUI's remote sidecar. Pair
+once per machine over Tailscale, pick which running instance to attach to,
+and drive every conversation tab independently of the desktop's active tab.
+
+Requires a gaviero TUI with remote enabled (default) on the same Tailscale
+tailnet. Wire protocol **1.1** (`gaviero.v1`); a 1.0 desktop still pairs
+and chats — it just has no instance directory and newest-page requests use
+the `before_seq: 9007199254740991` fallback.
+
+## Pairing
+
+1. On the PC, in the gaviero TUI, run `/remote`.
+2. In the app, scan the QR (FAB on the instance picker, or **Pair a
+   machine**). Manual entry takes host, token, and optional instance /
+   directory ports (directory defaults to `49151`).
+3. The token is stored in platform secure storage. It is never logged or
+   put in a URL.
+
+A QR's token is a **machine** token: every workspace on that PC reuses it.
+`/remote rotate` on the desktop invalidates it; the app returns to pairing
+for that machine only.
+
+## Instances
+
+The home screen lists every paired machine and every instance last seen on
+it.
+
+| Chip | Meaning |
+|---|---|
+| online | Directory listed it (heartbeat ≤ 90 s) |
+| in use | Another phone is connected — connecting replaces it |
+| offline | Known, but not listed this refresh |
+| unknown | `GET /v1/instances` returned 404 (1.0 desktop); still connectable |
+| needs pairing | Token got `401` / close `4001` / `4006` |
+
+Pull to refresh. Tap a row to connect (one instance at a time). Long-press
+forgets that instance; machine overflow forgets the whole machine.
+
+If a last-used instance is stored, the app opens chat immediately; the
+connection banner covers "instance offline".
+
+## Tabs
+
+A scrollable strip under the app bar lists every conversation in desktop
+order. The tab you are looking at is local (`viewedId`); the desktop's
+active tab is marked in the drawer but not followed unless **Follow
+desktop** is on.
+
+Composer, interrupt, permissions, and paging target the viewed tab.
+**Show on desktop** (tab long-press / drawer overflow) is the explicit
+desktop-switch command.
+
+## Build
+
+```bash
+flutter test
+flutter analyze
+flutter build apk --release
+```
+
+Toolchain pin: Flutter 3.44.8 / Dart 3.12.2. Do not add `http`, `dio`,
+Riverpod, or a router package.

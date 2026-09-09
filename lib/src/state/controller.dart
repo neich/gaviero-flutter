@@ -1,12 +1,16 @@
-/// Wires the connection, the mirror state, and pairing storage together and
+/// Wires the connection, the mirror state, and instance storage together and
 /// exposes the high-level actions the UI calls. Freshness tokens (§3.5) are
 /// attached here: `conv_revision` on rename/reset, `proposal_revision` on
 /// review actions, `request_id` on permission decisions.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../protocol/protocol.dart';
+import '../services/directory_client.dart';
+import '../services/instance_store.dart';
 import '../services/secure_store.dart';
 import '../transport/connection.dart';
 import 'app_state.dart';
@@ -14,85 +18,205 @@ import 'app_state.dart';
 final class RemoteController extends ChangeNotifier {
   final RemoteConnection connection;
   final AppState state;
-  final PairingStore pairingStore;
+  final InstanceStore instanceStore;
+  final DirectoryClient directoryClient;
 
-  PairingConfig? _pairing;
+  InstanceRecord? _current;
+  String? _needsPairingHost;
   final Set<String> _pagesInFlight = {};
+  final Set<String> _newestInFlight = {};
 
   RemoteController({
     RemoteConnection? connection,
     AppState? state,
-    PairingStore? pairingStore,
+    InstanceStore? instanceStore,
+    DirectoryClient? directoryClient,
   })  : connection = connection ?? RemoteConnection(),
         state = state ?? AppState(),
-        pairingStore = pairingStore ?? const PairingStore() {
-    this.connection.onEnvelope = this.state.applyEnvelope;
+        instanceStore = instanceStore ?? InstanceStore(),
+        directoryClient = directoryClient ?? DirectoryClient() {
+    this.connection.onEnvelope = _onEnvelope;
     this.connection.onInstanceChanged = this.state.clear;
     this.connection.onTokenInvalid = () async {
-      await this.pairingStore.clear();
-      _pairing = null;
+      final host = _current?.machineHost;
+      if (host != null) {
+        await this.instanceStore.markMachineNeedsPairing(host);
+      }
+      _needsPairingHost = host;
+      _current = null;
       notifyListeners();
     };
-    this.state.onNeedSnapshot = () {
-      this.connection.send(const RequestSnapshot());
+    this.state.onNeedNewestPage = (convId) {
+      requestNewestPage(convId);
     };
     this.connection.addListener(notifyListeners);
     this.state.addListener(notifyListeners);
   }
 
-  PairingConfig? get pairing => _pairing;
-  bool get isPaired => _pairing != null;
+  InstanceRecord? get current => _current;
+  String? get needsPairingHost => _needsPairingHost;
+  bool get isPaired => instanceStore.doc.machines.isNotEmpty;
 
-  /// Loads stored pairing and connects if present. Returns whether paired.
+  /// Loads stored instances and reconnects to [StoreDocument.lastInstance]
+  /// when present.
   Future<bool> initialize() async {
-    _pairing = await pairingStore.load();
+    await instanceStore.load();
     notifyListeners();
-    if (_pairing == null) return false;
-    await _connectWithPairing();
+    final last = instanceStore.doc.lastInstance;
+    if (last == null) return false;
+    final inst = instanceStore.instance(last);
+    if (inst == null) return false;
+    await connect(inst);
     return true;
   }
 
   Future<void> pair(PairingConfig config) async {
-    await pairingStore.save(config);
-    _pairing = config;
+    final host = config.machineHost;
+    await instanceStore.upsertMachine(MachineRecord(
+      host: host,
+      token: config.token,
+      directoryUrl: config.directoryUrl,
+      pairedAt: DateTime.now().toUtc().toIso8601String(),
+      needsPairing: false,
+    ));
+    final inst = InstanceRecord(
+      machineHost: host,
+      workspaceId: config.workspaceId,
+      displayName: config.workspace.isEmpty ? host : config.workspace,
+      url: config.url,
+    );
+    await instanceStore.upsertInstance(inst);
+    _needsPairingHost = null;
     notifyListeners();
-    await _connectWithPairing();
+    await connect(inst);
   }
 
-  Future<void> unpair() async {
+  /// Host + token only — directory refresh fills in running instances.
+  Future<void> pairMachineOnly(
+    String host,
+    String token, {
+    int directoryPort = defaultDirectoryPort,
+  }) async {
+    await instanceStore.upsertMachine(MachineRecord(
+      host: host,
+      token: token,
+      directoryUrl: 'https://$host:$directoryPort$instancesPath',
+      pairedAt: DateTime.now().toUtc().toIso8601String(),
+      needsPairing: false,
+    ));
+    _needsPairingHost = null;
+    notifyListeners();
+    await refreshDirectory();
+  }
+
+  Future<void> connect(InstanceRecord inst) async {
+    if (_current?.key != inst.key) {
+      await connection.stop();
+      state.clear();
+    }
+    _current = inst;
+    _needsPairingHost = null;
+    await instanceStore.setLastInstance(inst.key);
+    notifyListeners();
+    final machine = instanceStore.machine(inst.machineHost);
+    if (machine == null || machine.needsPairing) return;
+    await connection.start(Uri.parse(inst.url), machine.token);
+  }
+
+  Future<void> disconnect() async {
     await connection.stop();
-    await pairingStore.clear();
-    _pairing = null;
+    _current = null;
+    state.clear();
     notifyListeners();
   }
 
-  Future<void> _connectWithPairing() async {
-    final pairing = _pairing;
-    if (pairing == null) return;
-    await connection.start(Uri.parse(pairing.url), pairing.token);
+  Future<void> refreshDirectory() async {
+    await directoryClient.refresh(instanceStore);
+    notifyListeners();
+  }
+
+  Future<void> forgetInstance(InstanceKey key) async {
+    if (_current?.key == key) await disconnect();
+    await instanceStore.forgetInstance(key);
+    notifyListeners();
+  }
+
+  Future<void> forgetMachine(String host) async {
+    if (_current?.machineHost == host) await disconnect();
+    await instanceStore.forgetMachine(host);
+    if (_needsPairingHost == host) _needsPairingHost = null;
+    notifyListeners();
   }
 
   /// App resumed from background: a dead socket is routine (the server culls
   /// after 60 s without traffic). Reconnect silently.
   Future<void> onAppResumed() => connection.resume();
 
+  void _onEnvelope(ServerEnvelope envelope) {
+    if (envelope.payload case final Hello hello) {
+      _applyHello(hello);
+    }
+    state.applyEnvelope(envelope);
+  }
+
+  void _applyHello(Hello hello) {
+    final current = _current;
+    if (current == null) return;
+    final updated = current.copyWith(
+      workspaceId: hello.workspace.id,
+      displayName: hello.workspace.displayName,
+    );
+    _current = updated;
+    unawaited(instanceStore.upsertInstance(updated));
+    final machine = instanceStore.machine(current.machineHost);
+    final directoryUrl = hello.machine?.directoryUrl;
+    if (machine != null && directoryUrl != null) {
+      unawaited(instanceStore
+          .upsertMachine(machine.copyWith(directoryUrl: directoryUrl)));
+    }
+  }
+
+  Future<void> openNotificationTarget({
+    required String machineHost,
+    required String workspaceId,
+    required String convId,
+  }) async {
+    final key = InstanceKey(
+        machineHost, workspaceId.isEmpty ? null : workspaceId);
+    var inst = instanceStore.instance(key);
+    if (inst == null) {
+      for (final i in instanceStore.doc.instances) {
+        if (i.machineHost == machineHost &&
+            (workspaceId.isEmpty || i.workspaceId == workspaceId)) {
+          inst = i;
+          break;
+        }
+      }
+    }
+    if (inst == null) return;
+    if (_current?.key != inst.key) {
+      await connect(inst);
+    }
+    state.view(convId);
+  }
+
   // -- actions ------------------------------------------------------------
 
   Future<CommandOutcome> sendPrompt(String text) {
-    final convId = state.activeId;
+    final convId = state.viewedId;
     if (convId == null) return Future.value(const CommandDropped());
     return connection.send(SendPrompt(convId: convId, text: text));
   }
 
   Future<CommandOutcome> sendSlash(String line, {required bool confirmed}) {
-    final convId = state.activeId;
+    final convId = state.viewedId;
     if (convId == null) return Future.value(const CommandDropped());
     return connection
         .send(Slash(convId: convId, line: line, confirmed: confirmed));
   }
 
   Future<CommandOutcome> interrupt() {
-    final conv = state.active;
+    final conv = state.viewed;
     if (conv == null) return Future.value(const CommandDropped());
     return connection.send(Interrupt(
       convId: conv.summary.convId,
@@ -140,6 +264,22 @@ final class RemoteController extends ChangeNotifier {
       ));
     } finally {
       _pagesInFlight.remove(convId);
+    }
+  }
+
+  Future<void> requestNewestPage(String convId, {int limit = 50}) async {
+    if (!_newestInFlight.add(convId)) return;
+    state.expectNewestPage(convId);
+    try {
+      final supportsLatest =
+          connection.hello?.supportsLatestPage ?? false;
+      await connection.send(RequestMessages(
+        convId: convId,
+        beforeSeq: supportsLatest ? null : legacyNewestPageBeforeSeq,
+        limit: limit,
+      ));
+    } finally {
+      _newestInFlight.remove(convId);
     }
   }
 

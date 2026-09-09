@@ -23,6 +23,7 @@ class ConversationDrawer extends StatelessWidget {
           listenable: controller,
           builder: (context, _) {
             final conversations = controller.state.conversations;
+            final viewedId = controller.state.viewedId;
             final activeId = controller.state.activeId;
             return Column(
               children: [
@@ -52,7 +53,8 @@ class ConversationDrawer extends StatelessWidget {
                         _ConversationTile(
                           controller: controller,
                           conv: conv,
-                          isActive: conv.summary.convId == activeId,
+                          isViewed: conv.summary.convId == viewedId,
+                          isDesktopActive: conv.summary.convId == activeId,
                         ),
                     ],
                   ),
@@ -69,12 +71,14 @@ class ConversationDrawer extends StatelessWidget {
 class _ConversationTile extends StatelessWidget {
   final RemoteController controller;
   final ConversationData conv;
-  final bool isActive;
+  final bool isViewed;
+  final bool isDesktopActive;
 
   const _ConversationTile({
     required this.controller,
     required this.conv,
-    required this.isActive,
+    required this.isViewed,
+    required this.isDesktopActive,
   });
 
   @override
@@ -82,13 +86,18 @@ class _ConversationTile extends StatelessWidget {
     final summary = conv.summary;
     final pressure = summary.contextPressure;
     return ListTile(
-      selected: isActive,
+      selected: isViewed,
       title: Row(
         children: [
           Expanded(
             child: Text(summary.title,
                 maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
+          if (isDesktopActive)
+            const Padding(
+              padding: EdgeInsets.only(left: 4),
+              child: Icon(Icons.computer, size: 14),
+            ),
           if (summary.isStreaming)
             const Padding(
               padding: EdgeInsets.only(left: 6),
@@ -136,21 +145,21 @@ class _ConversationTile extends StatelessWidget {
             ),
         ],
       ),
-      onTap: () async {
+      onTap: () {
         Navigator.of(context).pop();
-        final outcome = await controller
-            .switchConversation(summary.convId);
-        if (context.mounted) showOutcome(context, outcome);
+        controller.state.view(summary.convId);
       },
       trailing: PopupMenuButton<String>(
         onSelected: (choice) => switch (choice) {
           'rename' => _rename(context),
           'reset' => _reset(context),
+          'desktop' => _showOnDesktop(context),
           _ => null,
         },
         itemBuilder: (context) => const [
           PopupMenuItem(value: 'rename', child: Text('Rename')),
           PopupMenuItem(value: 'reset', child: Text('Reset')),
+          PopupMenuItem(value: 'desktop', child: Text('Show on desktop')),
         ],
       ),
     );
@@ -199,6 +208,12 @@ class _ConversationTile extends StatelessWidget {
     if (confirmed != true) return;
     final outcome =
         await controller.resetConversation(conv.summary.convId);
+    if (context.mounted) showOutcome(context, outcome);
+  }
+
+  Future<void> _showOnDesktop(BuildContext context) async {
+    final outcome =
+        await controller.switchConversation(conv.summary.convId);
     if (context.mounted) showOutcome(context, outcome);
   }
 }
