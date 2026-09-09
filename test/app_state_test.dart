@@ -89,16 +89,18 @@ void main() {
     expect(state.conversation('c9'), isNotNull);
   });
 
-  test('switching to a conversation without a transcript asks for a '
-      'snapshot', () {
+  test('changing desktop active_id does not follow or fetch when '
+      'followDesktop is off', () {
     final state = AppState();
     var asked = 0;
-    state.onNeedSnapshot = () => asked++;
+    state.onNeedNewestPage = (_) => asked++;
     state.applyEnvelope(env(snapshot()));
     expect(asked, 0, reason: 'active conv transcript came in the snapshot');
+    expect(state.viewedId, 'c1');
     state.applyEnvelope(env(ConversationStateChanged(
         conversation: summary('c2'), activeId: 'c2')));
-    expect(asked, 1);
+    expect(state.viewedId, 'c1');
+    expect(asked, 0);
   });
 
   test('conversation_removed drops the tab and follows active_id', () {
