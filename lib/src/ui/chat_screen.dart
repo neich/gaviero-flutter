@@ -9,6 +9,7 @@ import '../state/controller.dart';
 import '../transport/connection.dart';
 import 'composer.dart';
 import 'conversation_drawer.dart';
+import 'feedback.dart';
 import 'message_widgets.dart';
 import 'permission_card.dart';
 import 'review_screen.dart';
@@ -34,7 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _maybePage() {
     // The list is reversed: maxScrollExtent is the oldest end.
     if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 400) {
-      final convId = widget.controller.state.activeId;
+      final convId = widget.controller.state.viewedId;
       if (convId != null) {
         widget.controller.requestOlderMessages(convId);
       }
@@ -47,7 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final conv = controller.state.active;
+        final conv = controller.state.viewed;
         return Scaffold(
           drawer: ConversationDrawer(controller: controller),
           appBar: AppBar(
@@ -65,6 +66,23 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
+              IconButton(
+                tooltip: 'Instances',
+                icon: const Icon(Icons.dns_outlined),
+                onPressed: () => controller.disconnect(),
+              ),
+              if (controller.state.otherPermissionCount > 0)
+                IconButton(
+                  tooltip: 'Open permission on another tab',
+                  icon: Badge.count(
+                    count: controller.state.otherPermissionCount,
+                    child: const Icon(Icons.gavel),
+                  ),
+                  onPressed: () {
+                    final other = controller.state.oldestOtherPermission;
+                    if (other != null) controller.state.view(other.convId);
+                  },
+                ),
               if (controller.state.openProposals.isNotEmpty)
                 IconButton(
                   tooltip: 'Review proposals',
@@ -78,21 +96,47 @@ class _ChatScreenState extends State<ChatScreen> {
                         ReviewListScreen(controller: controller),
                   )),
                 ),
+              PopupMenuButton<String>(
+                onSelected: (choice) async {
+                  switch (choice) {
+                    case 'follow':
+                      controller.state
+                          .setFollowDesktop(!controller.state.followDesktop);
+                    case 'instances':
+                      await controller.disconnect();
+                  }
+                },
+                itemBuilder: (context) => [
+                  CheckedPopupMenuItem(
+                    value: 'follow',
+                    checked: controller.state.followDesktop,
+                    child: const Text('Follow desktop'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'instances',
+                    child: Text('Instances'),
+                  ),
+                ],
+              ),
             ],
           ),
           body: Column(
             children: [
-              ConnectionBanner(connection: controller.connection),
+              ConnectionBanner(
+                connection: controller.connection,
+                instanceName: controller.current?.displayName,
+              ),
+              _ConversationTabs(controller: controller),
               if (conv != null) StatusStrip(conv: conv),
               Expanded(
                 child: conv == null
                     ? const Center(child: Text('No conversation'))
                     : _MessageList(conv: conv, scroll: _scroll),
               ),
-              if (controller.state.openPermissions.isNotEmpty)
+              if (controller.state.viewedPermissions.isNotEmpty)
                 PermissionCard(
                   controller: controller,
-                  request: controller.state.openPermissions.first,
+                  request: controller.state.viewedPermissions.first,
                 ),
               Composer(controller: controller),
             ],
@@ -153,6 +197,69 @@ class _MessageList extends StatelessWidget {
         return MessageBubble(message: messages[messageIndex]);
       },
     );
+  }
+}
+
+class _ConversationTabs extends StatelessWidget {
+  final RemoteController controller;
+  const _ConversationTabs({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final conversations = controller.state.conversations;
+    if (conversations.isEmpty) return const SizedBox.shrink();
+    final viewedId = controller.state.viewedId;
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        children: [
+          for (final conv in conversations)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: GestureDetector(
+                onLongPress: () => _showOnDesktop(context, conv.summary.convId),
+                child: FilterChip(
+                  visualDensity: VisualDensity.compact,
+                  selected: conv.summary.convId == viewedId,
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(conv.summary.title,
+                          overflow: TextOverflow.ellipsis),
+                      if (conv.summary.isStreaming) ...[
+                        const SizedBox(width: 6),
+                        const SizedBox(
+                          width: 8,
+                          height: 8,
+                          child: CircularProgressIndicator(strokeWidth: 1.5),
+                        ),
+                      ],
+                      if (controller.state.openPermissions
+                          .any((p) => p.convId == conv.summary.convId)) ...[
+                        const SizedBox(width: 4),
+                        const Icon(Icons.gavel, size: 14),
+                      ],
+                      if (conv.unread > 0) ...[
+                        const SizedBox(width: 4),
+                        Badge.count(count: conv.unread),
+                      ],
+                    ],
+                  ),
+                  onSelected: (_) =>
+                      controller.state.view(conv.summary.convId),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showOnDesktop(BuildContext context, String convId) async {
+    final outcome = await controller.switchConversation(convId);
+    if (context.mounted) showOutcome(context, outcome);
   }
 }
 
@@ -230,8 +337,13 @@ String _compact(int n) {
 /// banner. A routine reconnect shows nothing but a subtle progress line.
 class ConnectionBanner extends StatelessWidget {
   final RemoteConnection connection;
+  final String? instanceName;
 
-  const ConnectionBanner({super.key, required this.connection});
+  const ConnectionBanner({
+    super.key,
+    required this.connection,
+    this.instanceName,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -242,7 +354,10 @@ class ConnectionBanner extends StatelessWidget {
       ConnectionPhase.handshaking =>
         ('Connecting…', scheme.surfaceContainerHigh),
       ConnectionPhase.offline => (
-          connection.statusDetail ?? 'Instance offline',
+          [
+            if (instanceName != null) '$instanceName: ',
+            connection.statusDetail ?? 'Instance offline',
+          ].join(),
           scheme.surfaceContainerHigh
         ),
       ConnectionPhase.evicted => (
