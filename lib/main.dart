@@ -4,6 +4,7 @@ import 'src/services/notifications.dart';
 import 'src/state/controller.dart';
 import 'src/transport/connection.dart';
 import 'src/ui/chat_screen.dart';
+import 'src/ui/instance_picker_screen.dart';
 import 'src/ui/pairing_screen.dart';
 import 'src/ui/theme.dart';
 
@@ -32,8 +33,30 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     _controller.state.onPermissionRequested =
         _notifications.onPermissionRequested;
     _controller.state.onStreamingEnded = _notifications.onStreamingEnded;
+    _controller.addListener(_syncNotificationContext);
+    _notifications.onTap = _onNotificationTap;
     _notifications.initialize();
     _controller.initialize();
+  }
+
+  void _syncNotificationContext() {
+    final current = _controller.current;
+    _notifications.context.machineHost = current?.machineHost;
+    _notifications.context.workspaceId = current?.workspaceId;
+    _notifications.context.workspaceName = current?.displayName;
+    _notifications.context.conversationTitle = (convId) =>
+        _controller.state.conversation(convId)?.summary.title ?? convId;
+  }
+
+  Future<void> _onNotificationTap(String payload) async {
+    final decoded = NotificationService.decodePayload(payload);
+    if (decoded == null) return;
+    final (host, workspaceId, convId) = decoded;
+    await _controller.openNotificationTarget(
+      machineHost: host,
+      workspaceId: workspaceId,
+      convId: convId,
+    );
   }
 
   @override
@@ -54,11 +77,18 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
       home: ListenableBuilder(
         listenable: _controller,
         builder: (context, _) {
-          final needsPairing = !_controller.isPaired ||
-              _controller.connection.phase == ConnectionPhase.unauthorized;
-          return needsPairing
-              ? PairingScreen(controller: _controller)
-              : ChatScreen(controller: _controller);
+          final needsHost = _controller.needsPairingHost;
+          if (needsHost != null ||
+              _controller.connection.phase == ConnectionPhase.unauthorized) {
+            return PairingScreen(
+              controller: _controller,
+              forMachine: needsHost ?? _controller.current?.machineHost,
+            );
+          }
+          if (_controller.current != null) {
+            return ChatScreen(controller: _controller);
+          }
+          return InstancePickerScreen(controller: _controller);
         },
       ),
     );
@@ -67,6 +97,7 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _controller.removeListener(_syncNotificationContext);
     _controller.dispose();
     super.dispose();
   }
