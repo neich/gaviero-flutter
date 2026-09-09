@@ -1,6 +1,5 @@
-/// Pairing (manual-entry form; the QR scanner arrives in B9). Host + token
-/// go straight into secure storage; the token is never echoed back on
-/// screen after saving.
+/// Pairing (manual-entry form + QR). Host + token go into the instance
+/// store; the token is never echoed back on screen after saving.
 library;
 
 import 'package:flutter/material.dart';
@@ -13,17 +12,28 @@ import 'scanner_screen.dart';
 class PairingScreen extends StatefulWidget {
   final RemoteController controller;
 
-  const PairingScreen({super.key, required this.controller});
+  /// When set, this is a re-pair for a machine whose token died (4001/4006).
+  final String? forMachine;
+
+  const PairingScreen({super.key, required this.controller, this.forMachine});
 
   @override
   State<PairingScreen> createState() => PairingScreenState();
 }
 
 class PairingScreenState extends State<PairingScreen> {
-  final _url = TextEditingController();
+  late final TextEditingController _host;
   final _token = TextEditingController();
+  final _instancePort = TextEditingController();
+  final _directoryPort = TextEditingController();
   String? _error;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _host = TextEditingController(text: widget.forMachine ?? '');
+  }
 
   Future<void> submitPayload(String raw) async {
     setState(() {
@@ -34,6 +44,9 @@ class PairingScreenState extends State<PairingScreen> {
       final config = parsePairingPayload(raw,
           expectedMajor: protocolVersion.major);
       await widget.controller.pair(config);
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
     } on PairingError catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -42,32 +55,61 @@ class PairingScreenState extends State<PairingScreen> {
   }
 
   Future<void> _submitManual() async {
-    final url = _url.text.trim();
+    final host = _host.text.trim();
     final token = _token.text.trim();
-    if (!url.startsWith('wss://') || token.isEmpty) {
-      setState(() =>
-          _error = 'Enter the wss:// URL and token shown by /remote.');
+    if (host.isEmpty || token.isEmpty) {
+      setState(() => _error = 'Enter the host and token shown by /remote.');
       return;
     }
+    final instancePort = int.tryParse(_instancePort.text.trim());
+    final directoryPort =
+        int.tryParse(_directoryPort.text.trim()) ?? defaultDirectoryPort;
     setState(() {
       _busy = true;
       _error = null;
     });
-    await widget.controller
-        .pair(PairingConfig(url: url, token: token, workspace: ''));
-    if (mounted) setState(() => _busy = false);
+    try {
+      if (instancePort == null) {
+        await widget.controller.pairMachineOnly(
+          host,
+          token,
+          directoryPort: directoryPort,
+        );
+      } else {
+        await widget.controller.pair(PairingConfig(
+          url: 'wss://$host:$instancePort$wsPath',
+          token: token,
+          workspace: '',
+          machine: host,
+          directoryUrl: 'https://$host:$directoryPort$instancesPath',
+        ));
+      }
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final rePair = widget.forMachine;
     return Scaffold(
-      appBar: AppBar(title: const Text('Pair with gaviero')),
+      appBar: AppBar(
+        title: Text(rePair == null
+            ? 'Pair with gaviero'
+            : 'Pair $rePair again'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
           Text(
-            'Run /remote in the gaviero TUI and scan the QR code, or enter '
-            'the connection details manually.',
+            rePair == null
+                ? 'Run /remote in the gaviero TUI and scan the QR code, or '
+                    'enter the connection details manually.'
+                : 'The token for $rePair is no longer valid. Scan the QR '
+                    'from /remote on that machine.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -77,10 +119,10 @@ class PairingScreenState extends State<PairingScreen> {
               style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           TextField(
-            controller: _url,
+            controller: _host,
             decoration: const InputDecoration(
-              labelText: 'WebSocket URL',
-              hintText: 'wss://host.tailnet.ts.net:PORT/v1/ws',
+              labelText: 'Host',
+              hintText: 'host.tailnet.ts.net',
               border: OutlineInputBorder(),
             ),
           ),
@@ -91,6 +133,26 @@ class PairingScreenState extends State<PairingScreen> {
             decoration: const InputDecoration(
               labelText: 'Token',
               border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _instancePort,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Instance port (optional)',
+              hintText: 'shown by /remote',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _directoryPort,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Directory port (optional)',
+              hintText: '$defaultDirectoryPort',
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 16),
@@ -126,8 +188,10 @@ class PairingScreenState extends State<PairingScreen> {
 
   @override
   void dispose() {
-    _url.dispose();
+    _host.dispose();
     _token.dispose();
+    _instancePort.dispose();
+    _directoryPort.dispose();
     super.dispose();
   }
 }
