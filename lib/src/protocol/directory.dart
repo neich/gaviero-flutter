@@ -32,8 +32,8 @@ final class InstanceInfo {
 
   factory InstanceInfo.fromJson(Map<String, Object?> json) => InstanceInfo(
         instanceId: json['instance_id'] as String,
-        workspace:
-            WorkspaceInfo.fromJson(json['workspace'] as Map<String, Object?>),
+        workspace: WorkspaceInfo.fromJson(
+            Map<String, Object?>.from(json['workspace'] as Map)),
         url: json['url'] as String,
         port: json['port'] as int,
         tuiVersion: json['tui_version'] as String,
@@ -72,12 +72,12 @@ final class InstanceDirectory {
   factory InstanceDirectory.fromJson(Map<String, Object?> json) =>
       InstanceDirectory(
         protocolVersion: ProtocolVersion.fromJson(
-            json['protocol_version'] as Map<String, Object?>),
+            Map<String, Object?>.from(json['protocol_version'] as Map)),
         host: json['host'] as String,
         generatedAt: json['generated_at'] as String,
         instances: [
-          for (final i in json['instances'] as List<Object?>)
-            InstanceInfo.fromJson(i as Map<String, Object?>)
+          for (final i in json['instances'] as List)
+            InstanceInfo.fromJson(Map<String, Object?>.from(i as Map))
         ],
       );
 
