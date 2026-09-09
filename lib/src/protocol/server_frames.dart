@@ -65,11 +65,16 @@ final class Hello extends ServerPayload {
   final String tuiVersion;
   final WorkspaceInfo workspace;
 
-  /// Frozen shape, empty in 1.0. Unknown entries are ignored.
+  /// Frozen shape, empty in 1.0; 1.1 advertises [Capability.latestPage] and
+  /// [Capability.instances]. Unknown entries are ignored. Feature-detect with
+  /// [hasCapability], never with the minor version.
   final List<String> capabilities;
   final List<String> confirmRequired;
   final List<String> allowedSlashCommands;
   final Limits limits;
+
+  /// 1.1: absent from a 1.0 server.
+  final MachineInfo? machine;
 
   const Hello({
     required this.serverProtocolVersion,
@@ -80,7 +85,17 @@ final class Hello extends ServerPayload {
     required this.confirmRequired,
     required this.allowedSlashCommands,
     required this.limits,
+    this.machine,
   });
+
+  bool hasCapability(String capability) => capabilities.contains(capability);
+
+  /// `before_seq` may be omitted from `request_messages`.
+  bool get supportsLatestPage => hasCapability(Capability.latestPage);
+
+  /// The instance serves `GET /v1/instances`; without it the instance is
+  /// directory-less (still connectable, never listed by another instance).
+  bool get supportsInstances => hasCapability(Capability.instances);
 
   factory Hello.fromJson(Map<String, Object?> json) => Hello(
         serverProtocolVersion: ProtocolVersion.fromJson(
@@ -101,22 +116,29 @@ final class Hello extends ServerPayload {
             c as String
         ],
         limits: Limits.fromJson(json['limits'] as Map<String, Object?>),
+        machine: json['machine'] == null
+            ? null
+            : MachineInfo.fromJson(json['machine'] as Map<String, Object?>),
       );
 
   @override
   String get frameType => 'hello';
 
   @override
-  Map<String, Object?> toPayloadJson() => {
-        'protocol_version': serverProtocolVersion.toJson(),
-        'instance_id': instanceId,
-        'tui_version': tuiVersion,
-        'workspace': workspace.toJson(),
-        'capabilities': capabilities,
-        'confirm_required': confirmRequired,
-        'allowed_slash_commands': allowedSlashCommands,
-        'limits': limits.toJson(),
-      };
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{
+      'protocol_version': serverProtocolVersion.toJson(),
+      'instance_id': instanceId,
+      'tui_version': tuiVersion,
+      'workspace': workspace.toJson(),
+      'capabilities': capabilities,
+      'confirm_required': confirmRequired,
+      'allowed_slash_commands': allowedSlashCommands,
+      'limits': limits.toJson(),
+    };
+    _put(map, 'machine', machine?.toJson());
+    return map;
+  }
 }
 
 final class Snapshot extends ServerPayload {

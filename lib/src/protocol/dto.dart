@@ -27,6 +27,27 @@ final class WorkspaceInfo {
   Map<String, Object?> toJson() => {'id': id, 'display_name': displayName};
 }
 
+/// The machine an instance runs on (1.1). `host` is the MagicDNS name the
+/// certificate covers; `directoryUrl` is the machine directory
+/// (`https://<host>:<directoryPort>/v1/instances`) when enabled.
+final class MachineInfo {
+  final String host;
+  final String? directoryUrl;
+
+  const MachineInfo({required this.host, this.directoryUrl});
+
+  factory MachineInfo.fromJson(Map<String, Object?> json) => MachineInfo(
+        host: json['host'] as String,
+        directoryUrl: json['directory_url'] as String?,
+      );
+
+  Map<String, Object?> toJson() {
+    final map = <String, Object?>{'host': host};
+    _put(map, 'directory_url', directoryUrl);
+    return map;
+  }
+}
+
 final class Limits {
   final int maxFrameBytes;
   final int maxPromptBytes;

@@ -307,21 +307,25 @@ final class RequestSnapshot extends ClientPayload {
 
 final class RequestMessages extends ClientPayload {
   final String convId;
-  final int beforeSeq;
+
+  /// Paging cursor. Optional since 1.1 (`latest_page`): null ⇒ omitted from
+  /// the wire ⇒ the newest page. A 1.0 server requires it — send
+  /// [legacyNewestPageBeforeSeq] there instead.
+  final int? beforeSeq;
 
   /// Clamped server-side to 1–200.
   final int limit;
 
   const RequestMessages({
     required this.convId,
-    required this.beforeSeq,
+    this.beforeSeq,
     required this.limit,
   });
 
   factory RequestMessages.fromJson(Map<String, Object?> json) =>
       RequestMessages(
         convId: json['conv_id'] as String,
-        beforeSeq: json['before_seq'] as int,
+        beforeSeq: json['before_seq'] as int?,
         limit: json['limit'] as int,
       );
 
@@ -329,8 +333,12 @@ final class RequestMessages extends ClientPayload {
   String get frameType => 'request_messages';
 
   @override
-  Map<String, Object?> toPayloadJson() =>
-      {'conv_id': convId, 'before_seq': beforeSeq, 'limit': limit};
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{'conv_id': convId};
+    _put(map, 'before_seq', beforeSeq);
+    map['limit'] = limit;
+    return map;
+  }
 }
 
 final class RequestProposal extends ClientPayload {

@@ -61,6 +61,89 @@ void main() {
       expect(wsSubprotocol, schema['subprotocol']);
       expect(wsPath, schema['ws_path']);
     });
+
+    test('instances path matches the schema (1.1)', () {
+      expect(instancesPath, schema['instances_path']);
+    });
+  });
+
+  group('1.1 additions (D1)', () {
+    test('the vendored hello fixture is the 1.1 shape', () {
+      final hello =
+          ServerEnvelope.fromJson(readFixture('server', 'hello')).payload
+              as Hello;
+      expect(hello.capabilities, containsAll(['latest_page', 'instances']));
+      expect(hello.supportsLatestPage, isTrue);
+      expect(hello.supportsInstances, isTrue);
+      expect(hello.machine?.host, 'host.tailnet.ts.net');
+      expect(hello.machine?.directoryUrl,
+          'https://host.tailnet.ts.net:49151/v1/instances');
+    });
+
+    test('a 1.0 hello without machine decodes and re-encodes without it', () {
+      final json = readFixture('server', 'hello');
+      json['version'] = {'major': 1, 'minor': 0};
+      final payload = json['payload'] as Map<String, Object?>;
+      payload.remove('machine');
+      payload['protocol_version'] = {'major': 1, 'minor': 0};
+      payload['capabilities'] = <String>[];
+      final envelope = ServerEnvelope.fromJson(json);
+      final hello = envelope.payload as Hello;
+      expect(hello.machine, isNull);
+      expect(hello.supportsLatestPage, isFalse);
+      expect(hello.supportsInstances, isFalse);
+      expect(envelope.version.isCompatibleWith(protocolVersion), isTrue,
+          reason: 'a 1.0 desktop is still compatible: same major');
+      expect(deepEquals(envelope.toJson(), json), isTrue);
+      expect(hello.toPayloadJson().containsKey('machine'), isFalse);
+    });
+
+    test('a machine without directory_url round-trips without the key', () {
+      final json = readFixture('server', 'hello');
+      final machine = (json['payload'] as Map<String, Object?>)['machine']
+          as Map<String, Object?>;
+      machine.remove('directory_url');
+      final envelope = ServerEnvelope.fromJson(json);
+      expect((envelope.payload as Hello).machine!.directoryUrl, isNull);
+      expect(deepEquals(envelope.toJson(), json), isTrue);
+    });
+
+    test('request_messages with null before_seq omits the key', () {
+      const request = RequestMessages(convId: 'conv-3', limit: 50);
+      final payload = request.toPayloadJson();
+      expect(payload.containsKey('before_seq'), isFalse);
+      expect(payload, {'conv_id': 'conv-3', 'limit': 50});
+      final decoded = RequestMessages.fromJson(payload);
+      expect(decoded.beforeSeq, isNull);
+      // The 1.0 fallback is a plain integer that survives JSON as an int.
+      const legacy = RequestMessages(
+          convId: 'conv-3', beforeSeq: legacyNewestPageBeforeSeq, limit: 50);
+      final wire = jsonDecode(jsonEncode(legacy.toPayloadJson()))
+          as Map<String, Object?>;
+      expect(wire['before_seq'], 9007199254740991);
+    });
+
+    test('the vendored request_messages fixture still carries before_seq',
+        () {
+      final json = readFixture('client', 'request_messages');
+      final payload =
+          ClientEnvelope.fromJson(json).payload as RequestMessages;
+      expect(payload.beforeSeq, 57);
+    });
+
+    test('instances.json decodes, round-trips, and keeps client_connected',
+        () {
+      final json = readFixture('http', 'instances');
+      final directory = InstanceDirectory.fromJson(json);
+      expect(directory.protocolVersion, const ProtocolVersion(1, 1));
+      expect(directory.host, 'host.tailnet.ts.net');
+      expect(directory.instances, hasLength(2));
+      expect(directory.instances.map((i) => i.clientConnected), [false, true]);
+      expect(directory.instances[1].workspace.displayName, 'gaviero-flutter');
+      expect(directory.instances[1].port, 61440);
+      expect(deepEquals(directory.toJson(), json), isTrue,
+          reason: 're-encoded instances.json differs from the fixture');
+    });
   });
 
   group('client fixture round-trips', () {

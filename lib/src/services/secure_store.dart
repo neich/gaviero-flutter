@@ -10,16 +10,35 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 final class PairingConfig {
   /// `wss://host.tailnet.ts.net:PORT/v1/ws`
   final String url;
+
+  /// The machine token (1.1) unless the workspace opted out of machine
+  /// scope, in which case it is that workspace's own token.
   final String token;
 
   /// Workspace display name from the QR — cosmetic only.
   final String workspace;
 
+  /// 1.1, optional: hex workspace identity.
+  final String? workspaceId;
+
+  /// 1.1, optional: the MagicDNS host the token is scoped to.
+  final String? machine;
+
+  /// 1.1, optional: `https://<host>:<directoryPort>/v1/instances`.
+  final String? directoryUrl;
+
   const PairingConfig({
     required this.url,
     required this.token,
     required this.workspace,
+    this.workspaceId,
+    this.machine,
+    this.directoryUrl,
   });
+
+  /// The machine this pairing belongs to: the QR's `machine` when present,
+  /// else the host of the instance URL (1.0 QR / manual entry).
+  String get machineHost => machine ?? Uri.parse(url).host;
 }
 
 /// Thrown when a scanned QR is not a valid gaviero-remote pairing payload.
@@ -31,8 +50,10 @@ final class PairingError implements Exception {
   String toString() => message;
 }
 
-/// Parses and validates the QR payload (PLAN.md B9):
-/// `{ kind, url, token, workspace, protocol_major }`.
+/// Parses and validates the QR payload (PLAN.md B9, PLAN-D.md §0.1 item 5):
+/// `{ kind, url, token, workspace, protocol_major }` plus the optional 1.1
+/// keys `workspace_id`, `machine`, `directory_url`. A malformed optional key
+/// is ignored rather than rejected — a 1.0 app never saw them either.
 PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
   final Object? decoded;
   try {
@@ -57,10 +78,23 @@ PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
   if (url is! String || !url.startsWith('wss://') || token is! String) {
     throw const PairingError('The pairing code is malformed.');
   }
+  final Map<String, Object?> payload = decoded;
+  String? optional(String key) {
+    final value = payload[key];
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  final directoryUrl = optional('directory_url');
   return PairingConfig(
     url: url,
     token: token,
     workspace: (decoded['workspace'] as String?) ?? '',
+    workspaceId: optional('workspace_id'),
+    machine: optional('machine'),
+    directoryUrl:
+        directoryUrl != null && directoryUrl.startsWith('https://')
+            ? directoryUrl
+            : null,
   );
 }
 

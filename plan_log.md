@@ -110,3 +110,49 @@
 - Deviation: agent tooling dirs (`.claude/`, `.codex/`, `.cursor/`, `.gaviero/`,
   `.mcp.json`) gitignored — local config, not app code.
 - `flutter analyze` clean. **Pending user verification:** launch on a physical device.
+
+# Plan D Execution Log
+
+**Plan:** PLAN-D.md (Plan D V1 — instances and every tab)
+**Started:** 2026-09-09
+**Branch:** `plan-d-v1` (from `main` at `fad75ae`)
+**Status:** in progress
+
+## Preconditions
+- Wire 1.1 source of truth is the gaviero Rust working tree
+  (`crates/gaviero-remote/`): Plan C's C0 changes (schema, `hello.json`,
+  new `fixtures/http/instances.json`) are present but **not yet committed**
+  there. Vendored from the working tree; `diff -r` against upstream is empty.
+- Toolchain unchanged: Flutter 3.44.8 / Dart 3.12.2. Baseline before D1:
+  `flutter analyze` clean, 81 tests green.
+- Deviation (same as Plan B): no Android device or emulator is attached and
+  none will be; every device check is recorded below as **pending user
+  verification** and replaced by machine-verifiable tests where possible.
+
+## D1 — Codec 1.1
+- Re-vendored `protocol/protocol.schema.json` and all 34 fixtures (13 client,
+  20 server, 1 http). `protocolVersion` is now `1.1`; `instancesPath`,
+  `defaultDirectoryPort` (49151), `Capability.latestPage` /
+  `Capability.instances`, and `legacyNewestPageBeforeSeq` (2^53 − 1) live in
+  `lib/src/protocol/version.dart` — the plan did not say where, this is the
+  file the schema-constant test already pins.
+- `Hello.machine` (nullable `MachineInfo`, omitted on encode when null) plus
+  `hasCapability` / `supportsLatestPage` / `supportsInstances`;
+  `RequestMessages.beforeSeq` nullable and omitted when null;
+  `InstanceDirectory` / `InstanceInfo` in `lib/src/protocol/directory.dart`;
+  `parsePairingPayload` reads `workspace_id`, `machine`, `directory_url`;
+  `clientAppVersion` → `0.2.0`.
+- Deviation: `connection_test.dart` asserted `client_hello.version ==
+  {1,0}`; the app now speaks 1.1 so that one expectation became `{1,1}`. No
+  test was deleted.
+- Deviation: a non-`https://` `directory_url` in a QR is dropped silently
+  rather than failing the whole pairing — a 1.0 app never saw the key, so
+  ignoring a bad optional key is the compatible choice.
+- Note: PLAN-D §0.1's inline `instances.json` example (one instance) is a
+  sketch; the real fixture lists two instances with different ids. Schema and
+  fixture win; no code impact.
+- 10 new tests (hello 1.1 shape, 1.0 hello without `machine`, machine
+  without `directory_url`, `before_seq` omission + 2^53 − 1 survives JSON,
+  fixture cursor, `instances.json` round-trip incl. `client_connected`,
+  `instances_path` pinned to the schema, 1.0/1.1 QR payloads). `flutter
+  analyze` clean, 91 tests green.
