@@ -25,9 +25,19 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- Required from Flutter 3.24 so app_links owns the link, not
+                 the engine's default deep-link handler. -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- ntfy click URL: gaviero-remote://open?host=&workspace=&conv= -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="gaviero-remote" android:host="open"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
