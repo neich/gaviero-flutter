@@ -13,13 +13,12 @@ import 'package:gaviero_remote/src/protocol/version.dart';
 String _dirBody({
   required String host,
   required List<Map<String, Object?>> instances,
-}) =>
-    jsonEncode({
-      'protocol_version': {'major': 1, 'minor': 1},
-      'host': host,
-      'generated_at': '2026-09-09T12:00:00Z',
-      'instances': instances,
-    });
+}) => jsonEncode({
+  'protocol_version': {'major': 1, 'minor': 1},
+  'host': host,
+  'generated_at': '2026-09-09T12:00:00Z',
+  'instances': instances,
+});
 
 Map<String, Object?> _info({
   required String id,
@@ -28,19 +27,21 @@ Map<String, Object?> _info({
   required String url,
   required int port,
   bool inUse = false,
-}) =>
-    {
-      'instance_id': id,
-      'workspace': {'id': workspaceId, 'display_name': name},
-      'url': url,
-      'port': port,
-      'tui_version': '0.1.0',
-      'started_at': '2026-09-09T11:58:03Z',
-      'client_connected': inUse,
-    };
+  String startedAt = '2026-09-09T11:58:03Z',
+}) => {
+  'instance_id': id,
+  'workspace': {'id': workspaceId, 'display_name': name},
+  'url': url,
+  'port': port,
+  'tui_version': '0.1.0',
+  'started_at': startedAt,
+  'client_connected': inUse,
+};
 
-InstanceStore _storeWith(List<MachineRecord> machines,
-    [List<InstanceRecord> instances = const []]) {
+InstanceStore _storeWith(
+  List<MachineRecord> machines, [
+  List<InstanceRecord> instances = const [],
+]) {
   final store = InstanceStore(kv: MemoryKv());
   store.doc = StoreDocument(machines: machines, instances: instances);
   return store;
@@ -55,7 +56,7 @@ void main() {
           token: 't',
           directoryUrl: 'https://alpha:49151/v1/instances',
           pairedAt: 'x',
-        )
+        ),
       ],
       const [
         InstanceRecord(
@@ -63,34 +64,44 @@ void main() {
           workspaceId: 'old',
           displayName: 'old-ws',
           url: 'wss://alpha:1/v1/ws',
-        )
+        ),
       ],
     );
-    final client = DirectoryClient(fetch: (url, token) async {
-      if (url.port == defaultDirectoryPort) {
-        return DirectoryFetchResult(
-          200,
-          _dirBody(host: 'alpha', instances: [
-            _info(
-              id: 'a',
-              workspaceId: 'new',
-              name: 'new-ws',
-              url: 'wss://alpha:2/v1/ws',
-              port: 2,
+    final client = DirectoryClient(
+      fetch: (url, token) async {
+        if (url.port == defaultDirectoryPort) {
+          return DirectoryFetchResult(
+            200,
+            _dirBody(
+              host: 'alpha',
+              instances: [
+                _info(
+                  id: 'a',
+                  workspaceId: 'new',
+                  name: 'new-ws',
+                  url: 'wss://alpha:2/v1/ws',
+                  port: 2,
+                ),
+              ],
             ),
-          ]),
-        );
-      }
-      return const DirectoryFetchResult(404, '');
-    });
-    await client.refresh(store);
-    expect(
-      store.doc.instances.map((i) => i.workspaceId).toSet(),
-      {'old', 'new'},
+          );
+        }
+        return const DirectoryFetchResult(404, '');
+      },
     );
-    expect(store.instance(const InstanceKey('alpha', 'new'))!.lastOnline, isTrue);
+    await client.refresh(store);
+    expect(store.doc.instances.map((i) => i.workspaceId).toSet(), {
+      'old',
+      'new',
+    });
     expect(
-        store.instance(const InstanceKey('alpha', 'old'))!.lastUnknown, isTrue);
+      store.instance(const InstanceKey('alpha', 'new'))!.lastOnline,
+      isTrue,
+    );
+    expect(
+      store.instance(const InstanceKey('alpha', 'old'))!.lastUnknown,
+      isTrue,
+    );
   });
 
   test('an instance absent from this round stays and is offline', () async {
@@ -101,7 +112,7 @@ void main() {
           token: 't',
           directoryUrl: 'https://alpha:49151/v1/instances',
           pairedAt: 'x',
-        )
+        ),
       ],
       const [
         InstanceRecord(
@@ -110,18 +121,20 @@ void main() {
           displayName: 'gone',
           url: 'wss://alpha:9/v1/ws',
           lastOnline: true,
-        )
+        ),
       ],
     );
-    final client = DirectoryClient(fetch: (url, token) async {
-      if (url.port == defaultDirectoryPort) {
-        return DirectoryFetchResult(
-          200,
-          _dirBody(host: 'alpha', instances: []),
-        );
-      }
-      throw Exception('connection refused');
-    });
+    final client = DirectoryClient(
+      fetch: (url, token) async {
+        if (url.port == defaultDirectoryPort) {
+          return DirectoryFetchResult(
+            200,
+            _dirBody(host: 'alpha', instances: []),
+          );
+        }
+        throw Exception('connection refused');
+      },
+    );
     await client.refresh(store);
     final leftover = store.instance(const InstanceKey('alpha', 'gone'))!;
     expect(leftover.displayName, 'gone');
@@ -131,24 +144,19 @@ void main() {
 
   test('404 marks the probed instance unknown, still connectable', () async {
     final store = _storeWith(
-      [
-        const MachineRecord(
-          host: 'legacy',
-          token: 't',
-          pairedAt: 'x',
-        )
-      ],
+      [const MachineRecord(host: 'legacy', token: 't', pairedAt: 'x')],
       const [
         InstanceRecord(
           machineHost: 'legacy',
           workspaceId: 'ws',
           displayName: 'one-oh',
           url: 'wss://legacy:4443/v1/ws',
-        )
+        ),
       ],
     );
     final client = DirectoryClient(
-        fetch: (url, token) async => const DirectoryFetchResult(404, ''));
+      fetch: (url, token) async => const DirectoryFetchResult(404, ''),
+    );
     await client.refresh(store);
     final inst = store.instance(const InstanceKey('legacy', 'ws'))!;
     expect(store.chipFor(inst), InstanceChip.unknown);
@@ -163,7 +171,7 @@ void main() {
           token: 'dead',
           directoryUrl: 'https://alpha:49151/v1/instances',
           pairedAt: 'x',
-        )
+        ),
       ],
       const [
         InstanceRecord(
@@ -171,16 +179,107 @@ void main() {
           workspaceId: 'ws',
           displayName: 'keep-me',
           url: 'wss://alpha:1/v1/ws',
-        )
+        ),
       ],
     );
     final client = DirectoryClient(
-        fetch: (url, token) async => const DirectoryFetchResult(401, ''));
+      fetch: (url, token) async => const DirectoryFetchResult(401, ''),
+    );
     await client.refresh(store);
     expect(store.machine('alpha')!.needsPairing, isTrue);
     expect(store.doc.instances, hasLength(1));
     expect(store.doc.instances.single.displayName, 'keep-me');
-    expect(store.chipFor(store.doc.instances.single), InstanceChip.needsPairing);
+    expect(
+      store.chipFor(store.doc.instances.single),
+      InstanceChip.needsPairing,
+    );
+  });
+
+  test('duplicate workspace_id keeps the newest started_at url', () async {
+    final store = _storeWith([
+      const MachineRecord(
+        host: 'alpha',
+        token: 't',
+        directoryUrl: 'https://alpha:49151/v1/instances',
+        pairedAt: 'x',
+      ),
+    ]);
+    final client = DirectoryClient(
+      fetch: (url, token) async {
+        return DirectoryFetchResult(
+          200,
+          _dirBody(
+            host: 'alpha',
+            instances: [
+              _info(
+                id: 'old',
+                workspaceId: 'ws',
+                name: 'gaviero',
+                url: 'wss://alpha:52093/v1/ws',
+                port: 52093,
+                startedAt: '2026-09-09T15:00:00Z',
+              ),
+              _info(
+                id: 'new',
+                workspaceId: 'ws',
+                name: 'gaviero',
+                url: 'wss://alpha:52094/v1/ws',
+                port: 52094,
+                startedAt: '2026-09-09T15:31:04Z',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    await client.refresh(store);
+    final inst = store.instance(const InstanceKey('alpha', 'ws'))!;
+    expect(inst.url, 'wss://alpha:52094/v1/ws');
+    expect(store.doc.instances, hasLength(1));
+  });
+
+  test('port window finds the instance when the stored port is dead', () async {
+    final store = _storeWith(
+      [const MachineRecord(host: 'alpha', token: 't', pairedAt: 'x')],
+      const [
+        InstanceRecord(
+          machineHost: 'alpha',
+          workspaceId: 'ws',
+          displayName: 'gaviero',
+          url: 'wss://alpha:52093/v1/ws',
+        ),
+      ],
+    );
+    final client = DirectoryClient(
+      fetch: (url, token) async {
+        if (url.port == 52093) {
+          throw Exception('connection refused');
+        }
+        if (url.port == 52094) {
+          return DirectoryFetchResult(
+            200,
+            _dirBody(
+              host: 'alpha',
+              instances: [
+                _info(
+                  id: 'live',
+                  workspaceId: 'ws',
+                  name: 'gaviero',
+                  url: 'wss://alpha:52094/v1/ws',
+                  port: 52094,
+                ),
+              ],
+            ),
+          );
+        }
+        return const DirectoryFetchResult(404, '');
+      },
+    );
+    await client.refresh(store);
+    final inst = store.instance(const InstanceKey('alpha', 'ws'))!;
+    expect(inst.url, 'wss://alpha:52094/v1/ws');
+    expect(inst.lastOnline, isTrue);
+    expect(inst.lastUnknown, isFalse);
   });
 
   test('a 3s timeout on one machine does not delay another', () {
@@ -200,25 +299,30 @@ void main() {
         ),
       ]);
       var fastDone = false;
-      final client = DirectoryClient(fetch: (url, token) async {
-        if (url.host == 'slow') {
-          await Future<void>.delayed(const Duration(seconds: 30));
-          return const DirectoryFetchResult(200, '{}');
-        }
-        fastDone = true;
-        return DirectoryFetchResult(
-          200,
-          _dirBody(host: 'fast', instances: [
-            _info(
-              id: 'f',
-              workspaceId: 'fw',
-              name: 'fast-ws',
-              url: 'wss://fast:1/v1/ws',
-              port: 1,
+      final client = DirectoryClient(
+        fetch: (url, token) async {
+          if (url.host == 'slow') {
+            await Future<void>.delayed(const Duration(seconds: 30));
+            return const DirectoryFetchResult(200, '{}');
+          }
+          fastDone = true;
+          return DirectoryFetchResult(
+            200,
+            _dirBody(
+              host: 'fast',
+              instances: [
+                _info(
+                  id: 'f',
+                  workspaceId: 'fw',
+                  name: 'fast-ws',
+                  url: 'wss://fast:1/v1/ws',
+                  port: 1,
+                ),
+              ],
             ),
-          ]),
-        );
-      });
+          );
+        },
+      );
       final future = client.refresh(store);
       async.elapse(const Duration(milliseconds: 100));
       expect(fastDone, isTrue);

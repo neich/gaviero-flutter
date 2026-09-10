@@ -16,6 +16,10 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   mobile_scanner: ^7.4.0
   flutter_local_notifications: ^22.2.0
+  # ntfy click → open the paired instance (remote-ntfy v1). Pin ^6: v7
+  # raises the Flutter floor to 3.38 for iOS scenes; this app is 3.44.8
+  # and the plan locked major 6.
+  app_links: ^6.4.0
 
 dev_dependencies:
   flutter_test:

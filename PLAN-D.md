@@ -308,5 +308,5 @@ against a 1.0 desktop meanwhile). **C4 gates D6** (`/remote` QR with the 1.1 key
 | # | Question | Closed by |
 |---|---|---|
 | 1 | Does `flutter_secure_storage` 10.x on the user's Android version accept a multi-kilobyte value for `instances_v2` without truncation? Expected yes (EncryptedSharedPreferences); test with 20 instances. | D2 |
-| 2 | Should the app keep sockets to several instances open for notifications? Deferred; one at a time in this plan. | later plan |
+| 2 | Should the app keep sockets to several instances open for notifications? Deferred; one at a time in this plan. Always-on alerting is A8: the TUI publishes to ntfy; the ntfy app delivers. | later plan |
 | 3 | Tab strip versus drawer as the primary switcher on small screens — plan chooses the strip; revisit only after device use. | D4 device check |

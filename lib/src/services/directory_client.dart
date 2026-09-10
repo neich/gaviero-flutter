@@ -9,8 +9,8 @@ import '../protocol/directory.dart';
 import '../protocol/version.dart';
 import 'instance_store.dart';
 
-typedef DirectoryFetcher = Future<DirectoryFetchResult> Function(
-    Uri url, String bearerToken);
+typedef DirectoryFetcher =
+    Future<DirectoryFetchResult> Function(Uri url, String bearerToken);
 
 final class DirectoryFetchResult {
   final int status;
@@ -21,7 +21,9 @@ final class DirectoryFetchResult {
 /// `dart:io` `HttpClient` with default certificate validation — Tailscale
 /// certs chain to Let's Encrypt, so no pinning.
 Future<DirectoryFetchResult> dartIoDirectoryFetch(
-    Uri url, String bearerToken) async {
+  Uri url,
+  String bearerToken,
+) async {
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 3);
   try {
@@ -53,20 +55,17 @@ final class _MachineProbe {
 final class DirectoryClient {
   final DirectoryFetcher fetch;
   DirectoryClient({DirectoryFetcher? fetch})
-      : fetch = fetch ?? dartIoDirectoryFetch;
+    : fetch = fetch ?? dartIoDirectoryFetch;
 
   Future<void> refresh(InstanceStore store) async {
     final machines = [...store.doc.machines];
     final known = [...store.doc.instances];
     final results = await Future.wait([
       for (final machine in machines)
-        _probeMachine(
-          machine,
-          [
-            for (final i in known)
-              if (i.machineHost == machine.host) i
-          ],
-        ),
+        _probeMachine(machine, [
+          for (final i in known)
+            if (i.machineHost == machine.host) i,
+        ]),
     ]);
     for (final result in results) {
       await _apply(store, result);
@@ -87,38 +86,51 @@ final class DirectoryClient {
       seen.add(key);
       final existing = store.instance(key);
       if (existing == null) continue;
-      await store.upsertInstance(existing.copyWith(
-        lastOnline: false,
-        lastUnknown: true,
-        inUse: false,
-      ));
+      await store.upsertInstance(
+        existing.copyWith(lastOnline: false, lastUnknown: true, inUse: false),
+      );
     }
     final leftover = [
       for (final i in store.doc.instances)
-        if (i.machineHost == result.host && !seen.contains(i.key)) i
+        if (i.machineHost == result.host && !seen.contains(i.key)) i,
     ];
     for (final i in leftover) {
-      await store.upsertInstance(i.copyWith(
-        lastOnline: false,
-        lastUnknown: false,
-        inUse: false,
-      ));
+      await store.upsertInstance(
+        i.copyWith(lastOnline: false, lastUnknown: false, inUse: false),
+      );
     }
   }
 
   Future<_MachineProbe> _probeMachine(
-      MachineRecord machine, List<InstanceRecord> known) async {
+    MachineRecord machine,
+    List<InstanceRecord> known,
+  ) async {
     final online = <InstanceRecord>[];
     final unknown = <InstanceKey>{};
     var unauthorized = false;
     final seenOnline = <InstanceKey>{};
 
+    final startedAt = <InstanceKey, DateTime>{};
+
+    void offer(InstanceRecord rec, DateTime? started) {
+      final prev = startedAt[rec.key];
+      if (prev != null) {
+        if (started == null || !started.isAfter(prev)) return;
+      }
+      if (started != null) startedAt[rec.key] = started;
+      online.removeWhere((r) => r.key == rec.key);
+      online.add(rec);
+      seenOnline.add(rec.key);
+    }
+
     Future<void> probe(Uri url, {InstanceKey? fallbackKey}) async {
       if (unauthorized) return;
       DirectoryFetchResult result;
       try {
-        result =
-            await fetch(url, machine.token).timeout(const Duration(seconds: 3));
+        result = await fetch(
+          url,
+          machine.token,
+        ).timeout(const Duration(seconds: 3));
       } on Object {
         return;
       }
@@ -134,24 +146,26 @@ final class DirectoryClient {
       final InstanceDirectory dir;
       try {
         dir = InstanceDirectory.fromJson(
-            Map<String, Object?>.from(jsonDecode(result.body) as Map));
+          Map<String, Object?>.from(jsonDecode(result.body) as Map),
+        );
       } on Object {
         return;
       }
       final now = DateTime.now().toUtc().toIso8601String();
       for (final info in dir.instances) {
-        final rec = InstanceRecord(
-          machineHost: machine.host,
-          workspaceId: info.workspace.id,
-          displayName: info.workspace.displayName,
-          url: info.url,
-          lastSeen: now,
-          lastOnline: true,
-          lastUnknown: false,
-          inUse: info.clientConnected,
+        offer(
+          InstanceRecord(
+            machineHost: machine.host,
+            workspaceId: info.workspace.id,
+            displayName: info.workspace.displayName,
+            url: info.url,
+            lastSeen: now,
+            lastOnline: true,
+            lastUnknown: false,
+            inUse: info.clientConnected,
+          ),
+          DateTime.tryParse(info.startedAt)?.toUtc(),
         );
-        online.add(rec);
-        seenOnline.add(rec.key);
       }
     }
 
@@ -162,6 +176,7 @@ final class DirectoryClient {
     if (unauthorized) {
       return _MachineProbe(host: machine.host, unauthorized: true);
     }
+    final directoryPort = Uri.tryParse(machine.directoryUrl ?? '')?.port;
     for (final inst in known) {
       if (seenOnline.contains(inst.key)) continue;
       final origin = Uri.tryParse(inst.url);
@@ -176,11 +191,26 @@ final class DirectoryClient {
       if (unauthorized) {
         return _MachineProbe(host: machine.host, unauthorized: true);
       }
+      if (seenOnline.contains(inst.key)) continue;
+      for (var delta = 1; delta < instancePortWindow; delta++) {
+        final port = origin.port + delta;
+        if (port > 65535 || port == directoryPort) continue;
+        await probe(
+          origin.replace(
+            scheme: 'https',
+            port: port,
+            path: instancesPath,
+            query: '',
+            fragment: '',
+          ),
+        );
+        if (unauthorized) {
+          return _MachineProbe(host: machine.host, unauthorized: true);
+        }
+        if (seenOnline.contains(inst.key)) break;
+      }
     }
-    return _MachineProbe(
-      host: machine.host,
-      online: online,
-      unknown: unknown,
-    );
+    unknown.removeAll(seenOnline);
+    return _MachineProbe(host: machine.host, online: online, unknown: unknown);
   }
 }

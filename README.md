@@ -41,6 +41,22 @@ forgets that instance; machine overflow forgets the whole machine.
 If a last-used instance is stored, the app opens chat immediately; the
 connection banner covers "instance offline".
 
+## Always-on alerts (ntfy)
+
+Local notifications only fire while this app is connected (and die with
+Android doze / the sidecar's idle cull). For a ping when **any** desktop
+session finishes — even with the phone locked and this app not connected —
+install the **ntfy** app, then in the TUI:
+
+1. Set `notifications.ntfy.enabled: true` in user settings, restart gaviero.
+2. Run `/ntfy` and scan the QR (or open the `ntfy://…` link) in ntfy.
+3. Pair machines in Gaviero Remote as today.
+
+Tapping an ntfy notification opens this app at
+`gaviero-remote://open?host=&workspace=&conv=` when the instance is already
+paired; otherwise the instance picker is shown. This app does **not**
+subscribe to ntfy itself.
+
 ## Tabs
 
 A scrollable strip under the app bar lists every conversation in desktop
@@ -61,4 +77,5 @@ flutter build apk --release
 ```
 
 Toolchain pin: Flutter 3.44.8 / Dart 3.12.2. Do not add `http`, `dio`,
-Riverpod, or a router package.
+Riverpod, or a router package. `app_links` (^6) is the one extra package
+this plan allowed (ntfy click → open instance).

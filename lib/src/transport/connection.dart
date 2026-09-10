@@ -109,13 +109,15 @@ final class RemoteConnection extends ChangeNotifier {
 
   int _attempts = 0;
   int _commandCounter = 0;
-  late final String _sessionNonce =
-      _random.nextInt(1 << 32).toRadixString(16).padLeft(8, '0');
+  late final String _sessionNonce = _random
+      .nextInt(1 << 32)
+      .toRadixString(16)
+      .padLeft(8, '0');
   final Map<String, Completer<CommandOutcome>> _pending = {};
 
   RemoteConnection({WsConnector? connector, Random? random})
-      : _connector = connector ?? IoWsSocket.connect,
-        _random = random ?? Random();
+    : _connector = connector ?? IoWsSocket.connect,
+      _random = random ?? Random();
 
   ConnectionPhase get phase => _phase;
 
@@ -138,6 +140,9 @@ final class RemoteConnection extends ChangeNotifier {
     _token = token;
     _stopped = false;
     _attempts = 0;
+    _reconnectTimer?.cancel();
+    _helloTimeout?.cancel();
+    await _teardownSocket();
     await _connect();
   }
 
@@ -173,11 +178,13 @@ final class RemoteConnection extends ChangeNotifier {
     final commandId = _nextCommandId();
     final completer = Completer<CommandOutcome>();
     _pending[commandId] = completer;
-    socket.send(ClientEnvelope(
-      instanceId: _instanceId,
-      commandId: commandId,
-      payload: payload,
-    ).encode());
+    socket.send(
+      ClientEnvelope(
+        instanceId: _instanceId,
+        commandId: commandId,
+        payload: payload,
+      ).encode(),
+    );
     return completer.future;
   }
 
@@ -202,15 +209,17 @@ final class RemoteConnection extends ChangeNotifier {
     _socket = socket;
     _setPhase(ConnectionPhase.handshaking);
     // First frame after upgrade, and the only one with a null instance_id.
-    socket.send(ClientEnvelope(
-      instanceId: null,
-      commandId: _nextCommandId(),
-      payload: const ClientHello(
-        protocolVersion: protocolVersion,
-        clientName: clientName,
-        clientVersion: clientAppVersion,
-      ),
-    ).encode());
+    socket.send(
+      ClientEnvelope(
+        instanceId: null,
+        commandId: _nextCommandId(),
+        payload: const ClientHello(
+          protocolVersion: protocolVersion,
+          clientName: clientName,
+          clientVersion: clientAppVersion,
+        ),
+      ).encode(),
+    );
     _helloTimeout = Timer(const Duration(seconds: 10), () {
       _socket?.close(1000, 'hello timeout');
     });
@@ -277,10 +286,12 @@ final class RemoteConnection extends ChangeNotifier {
       case Snapshot():
         _snapshotInFlight = false;
       case CommandResult(:final commandId) when _pending.containsKey(commandId):
-        _pending.remove(commandId)!
+        _pending
+            .remove(commandId)!
             .complete(CommandOk(envelope.payload as CommandResult));
       case CommandError(:final commandId) when _pending.containsKey(commandId):
-        _pending.remove(commandId)!
+        _pending
+            .remove(commandId)!
             .complete(CommandFail(envelope.payload as CommandError));
       case UnknownServerPayload(:final type):
         debugPrint('gaviero-remote: ignoring unknown frame type "$type"');
@@ -293,11 +304,13 @@ final class RemoteConnection extends ChangeNotifier {
   void _requestSnapshot() {
     if (_snapshotInFlight) return;
     _snapshotInFlight = true;
-    _socket?.send(ClientEnvelope(
-      instanceId: _instanceId,
-      commandId: _nextCommandId(),
-      payload: const RequestSnapshot(),
-    ).encode());
+    _socket?.send(
+      ClientEnvelope(
+        instanceId: _instanceId,
+        commandId: _nextCommandId(),
+        payload: const RequestSnapshot(),
+      ).encode(),
+    );
   }
 
   void _onClosed() {

@@ -40,6 +40,10 @@ const instancesPath = '/v1/instances';
 /// Default machine directory port (PROTOCOL.md header).
 const defaultDirectoryPort = 49151;
 
+/// How far past a stored instance port we probe when that listener is gone
+/// (matches gaviero-tui `PORT_WINDOW`: derived port + 0..9).
+const instancePortWindow = 10;
+
 /// `hello.capabilities` entries (1.1). Feature-detect with these, never with
 /// the minor version.
 abstract final class Capability {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:app_links/app_links.dart';
 
+import 'src/services/deep_link.dart';
 import 'src/services/notifications.dart';
 import 'src/state/controller.dart';
 import 'src/transport/connection.dart';
@@ -37,6 +39,22 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     _notifications.onTap = _onNotificationTap;
     _notifications.initialize();
     _controller.initialize();
+    _listenDeepLinks();
+  }
+
+  void _listenDeepLinks() {
+    // uriLinkStream includes the cold-start URI (app_links singleton).
+    AppLinks().uriLinkStream.listen(_onDeepLink);
+  }
+
+  Future<void> _onDeepLink(Uri uri) async {
+    final target = parseGavieroRemoteOpen(uri);
+    if (target == null) return;
+    await _controller.openNotificationTarget(
+      machineHost: target.host,
+      workspaceId: target.workspaceId,
+      convId: target.convId,
+    );
   }
 
   void _syncNotificationContext() {
