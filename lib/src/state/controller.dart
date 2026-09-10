@@ -31,10 +31,10 @@ final class RemoteController extends ChangeNotifier {
     AppState? state,
     InstanceStore? instanceStore,
     DirectoryClient? directoryClient,
-  })  : connection = connection ?? RemoteConnection(),
-        state = state ?? AppState(),
-        instanceStore = instanceStore ?? InstanceStore(),
-        directoryClient = directoryClient ?? DirectoryClient() {
+  }) : connection = connection ?? RemoteConnection(),
+       state = state ?? AppState(),
+       instanceStore = instanceStore ?? InstanceStore(),
+       directoryClient = directoryClient ?? DirectoryClient() {
     this.connection.onEnvelope = _onEnvelope;
     this.connection.onInstanceChanged = this.state.clear;
     this.connection.onTokenInvalid = () async {
@@ -57,11 +57,13 @@ final class RemoteController extends ChangeNotifier {
   String? get needsPairingHost => _needsPairingHost;
   bool get isPaired => instanceStore.doc.machines.isNotEmpty;
 
-  /// Loads stored instances and reconnects to [StoreDocument.lastInstance]
-  /// when present.
+  /// Loads stored instances, refreshes the machine directory so a TUI that
+  /// fell forward to a new port is found, then reconnects to
+  /// [StoreDocument.lastInstance] when present.
   Future<bool> initialize() async {
     await instanceStore.load();
     notifyListeners();
+    await refreshDirectory();
     final last = instanceStore.doc.lastInstance;
     if (last == null) return false;
     final inst = instanceStore.instance(last);
@@ -72,13 +74,15 @@ final class RemoteController extends ChangeNotifier {
 
   Future<void> pair(PairingConfig config) async {
     final host = config.machineHost;
-    await instanceStore.upsertMachine(MachineRecord(
-      host: host,
-      token: config.token,
-      directoryUrl: config.directoryUrl,
-      pairedAt: DateTime.now().toUtc().toIso8601String(),
-      needsPairing: false,
-    ));
+    await instanceStore.upsertMachine(
+      MachineRecord(
+        host: host,
+        token: config.token,
+        directoryUrl: config.directoryUrl,
+        pairedAt: DateTime.now().toUtc().toIso8601String(),
+        needsPairing: false,
+      ),
+    );
     final inst = InstanceRecord(
       machineHost: host,
       workspaceId: config.workspaceId,
@@ -97,22 +101,26 @@ final class RemoteController extends ChangeNotifier {
     String token, {
     int directoryPort = defaultDirectoryPort,
   }) async {
-    await instanceStore.upsertMachine(MachineRecord(
-      host: host,
-      token: token,
-      directoryUrl: 'https://$host:$directoryPort$instancesPath',
-      pairedAt: DateTime.now().toUtc().toIso8601String(),
-      needsPairing: false,
-    ));
+    await instanceStore.upsertMachine(
+      MachineRecord(
+        host: host,
+        token: token,
+        directoryUrl: 'https://$host:$directoryPort$instancesPath',
+        pairedAt: DateTime.now().toUtc().toIso8601String(),
+        needsPairing: false,
+      ),
+    );
     _needsPairingHost = null;
     notifyListeners();
     await refreshDirectory();
   }
 
   Future<void> connect(InstanceRecord inst) async {
-    if (_current?.key != inst.key) {
+    final switched = _current?.key != inst.key;
+    final moved = _current?.url != inst.url;
+    if (switched || moved) {
       await connection.stop();
-      state.clear();
+      if (switched) state.clear();
     }
     _current = inst;
     _needsPairingHost = null;
@@ -120,6 +128,13 @@ final class RemoteController extends ChangeNotifier {
     notifyListeners();
     final machine = instanceStore.machine(inst.machineHost);
     if (machine == null || machine.needsPairing) return;
+    if (!switched &&
+        !moved &&
+        (connection.isConnected ||
+            connection.phase == ConnectionPhase.connecting ||
+            connection.phase == ConnectionPhase.handshaking)) {
+      return;
+    }
     await connection.start(Uri.parse(inst.url), machine.token);
   }
 
@@ -149,8 +164,24 @@ final class RemoteController extends ChangeNotifier {
   }
 
   /// App resumed from background: a dead socket is routine (the server culls
-  /// after 60 s without traffic). Reconnect silently.
-  Future<void> onAppResumed() => connection.resume();
+  /// after 60 s without traffic). Refresh the directory first so a TUI that
+  /// moved port while we were away is followed; otherwise reconnect silently.
+  Future<void> onAppResumed() async {
+    final current = _current;
+    if (current == null) {
+      await refreshDirectory();
+      return;
+    }
+    final key = current.key;
+    final previousUrl = current.url;
+    await refreshDirectory();
+    final updated = instanceStore.instance(key);
+    if (updated != null && updated.url != previousUrl) {
+      await connect(updated);
+      return;
+    }
+    await connection.resume();
+  }
 
   void _onEnvelope(ServerEnvelope envelope) {
     if (envelope.payload case final Hello hello) {
@@ -171,8 +202,11 @@ final class RemoteController extends ChangeNotifier {
     final machine = instanceStore.machine(current.machineHost);
     final directoryUrl = hello.machine?.directoryUrl;
     if (machine != null && directoryUrl != null) {
-      unawaited(instanceStore
-          .upsertMachine(machine.copyWith(directoryUrl: directoryUrl)));
+      unawaited(
+        instanceStore.upsertMachine(
+          machine.copyWith(directoryUrl: directoryUrl),
+        ),
+      );
     }
   }
 
@@ -182,7 +216,9 @@ final class RemoteController extends ChangeNotifier {
     required String convId,
   }) async {
     final key = InstanceKey(
-        machineHost, workspaceId.isEmpty ? null : workspaceId);
+      machineHost,
+      workspaceId.isEmpty ? null : workspaceId,
+    );
     var inst = instanceStore.instance(key);
     if (inst == null) {
       for (final i in instanceStore.doc.instances) {
@@ -193,7 +229,12 @@ final class RemoteController extends ChangeNotifier {
         }
       }
     }
-    if (inst == null) return;
+    if (inst == null) {
+      // Unpaired / unknown instance: drop the current socket so the
+      // picker (or pairing screen) is what the user sees.
+      if (_current != null) await disconnect();
+      return;
+    }
     if (_current?.key != inst.key) {
       await connect(inst);
     }
@@ -211,17 +252,20 @@ final class RemoteController extends ChangeNotifier {
   Future<CommandOutcome> sendSlash(String line, {required bool confirmed}) {
     final convId = state.viewedId;
     if (convId == null) return Future.value(const CommandDropped());
-    return connection
-        .send(Slash(convId: convId, line: line, confirmed: confirmed));
+    return connection.send(
+      Slash(convId: convId, line: line, confirmed: confirmed),
+    );
   }
 
   Future<CommandOutcome> interrupt() {
     final conv = state.viewed;
     if (conv == null) return Future.value(const CommandDropped());
-    return connection.send(Interrupt(
-      convId: conv.summary.convId,
-      turnId: conv.summary.pendingTurnId,
-    ));
+    return connection.send(
+      Interrupt(
+        convId: conv.summary.convId,
+        turnId: conv.summary.pendingTurnId,
+      ),
+    );
   }
 
   Future<CommandOutcome> newConversation() =>
@@ -233,20 +277,24 @@ final class RemoteController extends ChangeNotifier {
   Future<CommandOutcome> renameConversation(String convId, String title) {
     final conv = state.conversation(convId);
     if (conv == null) return Future.value(const CommandDropped());
-    return connection.send(RenameConversation(
-      convId: convId,
-      convRevision: conv.summary.convRevision,
-      title: title,
-    ));
+    return connection.send(
+      RenameConversation(
+        convId: convId,
+        convRevision: conv.summary.convRevision,
+        title: title,
+      ),
+    );
   }
 
   Future<CommandOutcome> resetConversation(String convId) {
     final conv = state.conversation(convId);
     if (conv == null) return Future.value(const CommandDropped());
-    return connection.send(ResetConversation(
-      convId: convId,
-      convRevision: conv.summary.convRevision,
-    ));
+    return connection.send(
+      ResetConversation(
+        convId: convId,
+        convRevision: conv.summary.convRevision,
+      ),
+    );
   }
 
   /// Scroll-back paging (§3.6): one cursor concept, `before_seq =
@@ -257,11 +305,9 @@ final class RemoteController extends ChangeNotifier {
     if (conv == null || cursor == null || !conv.hasOlderMessages) return;
     if (!_pagesInFlight.add(convId)) return;
     try {
-      await connection.send(RequestMessages(
-        convId: convId,
-        beforeSeq: cursor,
-        limit: limit,
-      ));
+      await connection.send(
+        RequestMessages(convId: convId, beforeSeq: cursor, limit: limit),
+      );
     } finally {
       _pagesInFlight.remove(convId);
     }
@@ -271,13 +317,14 @@ final class RemoteController extends ChangeNotifier {
     if (!_newestInFlight.add(convId)) return;
     state.expectNewestPage(convId);
     try {
-      final supportsLatest =
-          connection.hello?.supportsLatestPage ?? false;
-      await connection.send(RequestMessages(
-        convId: convId,
-        beforeSeq: supportsLatest ? null : legacyNewestPageBeforeSeq,
-        limit: limit,
-      ));
+      final supportsLatest = connection.hello?.supportsLatestPage ?? false;
+      await connection.send(
+        RequestMessages(
+          convId: convId,
+          beforeSeq: supportsLatest ? null : legacyNewestPageBeforeSeq,
+          limit: limit,
+        ),
+      );
     } finally {
       _newestInFlight.remove(convId);
     }
@@ -288,13 +335,14 @@ final class RemoteController extends ChangeNotifier {
     required bool allow,
     List<List<int>>? answers,
     String? message,
-  }) =>
-      connection.send(PermissionDecision(
-        requestId: requestId,
-        allow: allow,
-        answers: answers,
-        message: message,
-      ));
+  }) => connection.send(
+    PermissionDecision(
+      requestId: requestId,
+      allow: allow,
+      answers: answers,
+      message: message,
+    ),
+  );
 
   Future<CommandOutcome> reviewAction(
     int proposalId,
@@ -303,12 +351,14 @@ final class RemoteController extends ChangeNotifier {
   }) {
     final proposal = state.proposal(proposalId);
     if (proposal == null) return Future.value(const CommandDropped());
-    return connection.send(ReviewAction(
-      proposalId: proposalId,
-      proposalRevision: proposal.revision,
-      action: action,
-      hunkIndex: hunkIndex,
-    ));
+    return connection.send(
+      ReviewAction(
+        proposalId: proposalId,
+        proposalRevision: proposal.revision,
+        action: action,
+        hunkIndex: hunkIndex,
+      ),
+    );
   }
 
   Future<CommandOutcome> requestProposal(int proposalId) =>
