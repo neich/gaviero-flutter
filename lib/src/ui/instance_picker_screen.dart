@@ -25,6 +25,14 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
 
   RemoteController get controller => widget.controller;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _refresh();
+    });
+  }
+
   Future<void> _refresh() async {
     setState(() => _refreshing = true);
     await controller.refreshDirectory();
@@ -37,13 +45,16 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
     );
     if (raw == null || !mounted) return;
     try {
-      final config =
-          parsePairingPayload(raw, expectedMajor: protocolVersion.major);
+      final config = parsePairingPayload(
+        raw,
+        expectedMajor: protocolVersion.major,
+      );
       await controller.pair(config);
     } on PairingError catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -55,11 +66,13 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
         content: Text(inst.displayName),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Forget')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Forget'),
+          ),
         ],
       ),
     );
@@ -74,11 +87,13 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
         content: Text('Removes ${machine.host} and every instance on it.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Forget')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Forget'),
+          ),
         ],
       ),
     );
@@ -98,10 +113,11 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
               IconButton(
                 tooltip: 'Pair a machine',
                 icon: const Icon(Icons.qr_code_2),
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (context) =>
-                      PairingScreen(controller: controller),
-                )),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => PairingScreen(controller: controller),
+                  ),
+                ),
               ),
             ],
           ),
@@ -130,7 +146,7 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
                           machine: machine,
                           instances: [
                             for (final i in doc.instances)
-                              if (i.machineHost == machine.host) i
+                              if (i.machineHost == machine.host) i,
                           ],
                           store: controller.instanceStore,
                           onTap: (inst) => controller.connect(inst),
@@ -169,8 +185,10 @@ class _MachineSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ListTile(
-          title: Text(machine.host,
-              style: Theme.of(context).textTheme.titleSmall),
+          title: Text(
+            machine.host,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
           trailing: PopupMenuButton<String>(
             onSelected: (choice) {
               if (choice == 'forget') onForgetMachine();
@@ -214,18 +232,24 @@ class _InstanceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final hostPort = '${inst.machineHost}:${inst.port}';
     return ListTile(
-      key: ValueKey('instance-${inst.machineHost}-${inst.workspaceId ?? inst.url}'),
+      key: ValueKey(
+        'instance-${inst.machineHost}-${inst.workspaceId ?? inst.url}',
+      ),
       title: Text(inst.displayName),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(hostPort),
           if (inst.lastSeen != null)
-            Text('Last seen ${inst.lastSeen}',
-                style: Theme.of(context).textTheme.labelSmall),
+            Text(
+              'Last seen ${inst.lastSeen}',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
           if (chip == InstanceChip.inUse)
-            Text('another device is connected — connecting will replace it',
-                style: Theme.of(context).textTheme.labelSmall),
+            Text(
+              'another device is connected — connecting will replace it',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
         ],
       ),
       trailing: _Chip(chip: chip),
