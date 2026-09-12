@@ -13,6 +13,7 @@ import 'feedback.dart';
 import 'message_widgets.dart';
 import 'permission_card.dart';
 import 'review_screen.dart';
+import 'shell_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final RemoteController controller;
@@ -66,6 +67,13 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
+              IconButton(
+                tooltip: 'Shell sessions',
+                icon: const Icon(Icons.terminal),
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => ShellScreen(controller: controller),
+                )),
+              ),
               IconButton(
                 tooltip: 'Instances',
                 icon: const Icon(Icons.dns_outlined),

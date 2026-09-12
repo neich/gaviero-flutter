@@ -1,4 +1,4 @@
-/// Client → server frame payloads (13 types).
+/// Client → server frame payloads (15 types).
 library;
 
 import 'version.dart';
@@ -28,8 +28,36 @@ sealed class ClientPayload {
         'request_snapshot' => const RequestSnapshot(),
         'request_messages' => RequestMessages.fromJson(json),
         'request_proposal' => RequestProposal.fromJson(json),
+        'request_terminals' => RequestTerminals(terminalId: json['terminal_id'] as int?),
+        'terminal_input' => TerminalInput(
+            terminalId: json['terminal_id'] as int, text: json['text'] as String),
         _ => throw FormatException('unknown client frame type: $type'),
       };
+}
+
+final class RequestTerminals extends ClientPayload {
+  final int? terminalId;
+  const RequestTerminals({this.terminalId});
+
+  @override
+  String get frameType => 'request_terminals';
+
+  @override
+  Map<String, Object?> toPayloadJson() => {
+    if (terminalId != null) 'terminal_id': terminalId,
+  };
+}
+
+final class TerminalInput extends ClientPayload {
+  final int terminalId;
+  final String text;
+  const TerminalInput({required this.terminalId, required this.text});
+
+  @override
+  String get frameType => 'terminal_input';
+
+  @override
+  Map<String, Object?> toPayloadJson() => {'terminal_id': terminalId, 'text': text};
 }
 
 final class ClientHello extends ClientPayload {
