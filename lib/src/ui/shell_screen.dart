@@ -77,7 +77,9 @@ class _ShellScreenState extends State<ShellScreen>
     try {
       final outcome = await _connection.send(RequestTerminals(terminalId: _selected));
       if (!mounted || generation != _generation ||
-          instanceId != _connection.instanceId) return;
+          instanceId != _connection.instanceId) {
+        return;
+      }
       if (outcome is CommandOk) {
         final result = outcome.result.result as Map<String, Object?>;
         final tabs = (result['terminals'] as List)
