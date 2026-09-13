@@ -19,7 +19,8 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "dev.gaviero.gaviero_remote"
-        // minSdk 23 required by flutter_secure_storage 10.x (PLAN.md §2).
+        // flutter_secure_storage 11.x requires minSdk 24; Flutter 3.47's
+        // flutter.minSdkVersion is 24.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

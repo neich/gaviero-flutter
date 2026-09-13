@@ -76,6 +76,6 @@ flutter analyze
 flutter build apk --release
 ```
 
-Toolchain pin: Flutter 3.44.8 / Dart 3.12.2. Do not add `http`, `dio`,
-Riverpod, or a router package. `app_links` (^6) is the one extra package
+Toolchain pin: Flutter 3.47.4 / Dart 3.13.3. Do not add `http`, `dio`,
+Riverpod, or a router package. `app_links` (^7.2.1) is the one extra package
 this plan allowed (ntfy click → open instance).
