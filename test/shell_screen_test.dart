@@ -19,7 +19,7 @@ void main() {
         'type': 'command_result',
         'payload': {
           'command_id': request['command_id'], 'status': 'completed',
-          if (result != null) 'result': result,
+          'result': ?result,
         },
       });
     }
