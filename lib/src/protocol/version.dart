@@ -52,6 +52,9 @@ abstract final class Capability {
 
   /// The instance serves `GET /v1/instances`.
   static const instances = 'instances';
+
+  /// `request_file_completions` lists workspace paths for `@` references.
+  static const fileCompletions = 'file_completions';
 }
 
 /// `before_seq` to send to a server without [Capability.latestPage]: 2^53 − 1,

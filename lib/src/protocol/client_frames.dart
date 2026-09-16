@@ -1,4 +1,4 @@
-/// Client → server frame payloads (15 types).
+/// Client → server frame payloads (16 types).
 library;
 
 import 'version.dart';
@@ -31,6 +31,8 @@ sealed class ClientPayload {
         'request_terminals' => RequestTerminals(terminalId: json['terminal_id'] as int?),
         'terminal_input' => TerminalInput(
             terminalId: json['terminal_id'] as int, text: json['text'] as String),
+        'request_file_completions' => RequestFileCompletions(
+            query: json['query'] as String, limit: json['limit'] as int?),
         _ => throw FormatException('unknown client frame type: $type'),
       };
 }
@@ -58,6 +60,28 @@ final class TerminalInput extends ClientPayload {
 
   @override
   Map<String, Object?> toPayloadJson() => {'terminal_id': terminalId, 'text': text};
+}
+
+/// Requires [Capability.fileCompletions]. The completed result is
+/// `{query, files: [string]}` with workspace-relative paths.
+final class RequestFileCompletions extends ClientPayload {
+  /// Text typed after `@`, without the `@`. At most 1024 bytes.
+  final String query;
+
+  /// Clamped server-side to 1–50; null ⇒ omitted ⇒ 10.
+  final int? limit;
+
+  const RequestFileCompletions({required this.query, this.limit});
+
+  @override
+  String get frameType => 'request_file_completions';
+
+  @override
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{'query': query};
+    _put(map, 'limit', limit);
+    return map;
+  }
 }
 
 final class ClientHello extends ClientPayload {

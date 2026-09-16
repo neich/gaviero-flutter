@@ -364,6 +364,16 @@ final class RemoteController extends ChangeNotifier {
   Future<CommandOutcome> requestProposal(int proposalId) =>
       connection.send(RequestProposal(proposalId: proposalId));
 
+  /// Workspace paths for an `@` reference; dropped without sending on a
+  /// server lacking [Capability.fileCompletions].
+  Future<CommandOutcome> requestFileCompletions(String query) {
+    if (!(connection.hello?.hasCapability(Capability.fileCompletions) ??
+        false)) {
+      return Future.value(const CommandDropped());
+    }
+    return connection.send(RequestFileCompletions(query: query));
+  }
+
   @override
   void dispose() {
     connection.dispose();

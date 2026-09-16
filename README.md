@@ -68,6 +68,14 @@ Composer, interrupt, permissions, and paging target the viewed tab.
 **Show on desktop** (tab long-press / drawer overflow) is the explicit
 desktop-switch command.
 
+## `@` file references
+
+Typing `@` in the composer lists matching workspace files from the desktop
+(same matcher as the desktop popup); tapping one inserts `@<path> `, and the
+desktop reads that file into the prompt on send. Needs a gaviero build that
+advertises the `file_completions` capability — older desktops simply show no
+suggestions.
+
 ## Build
 
 ```bash
