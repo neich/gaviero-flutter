@@ -157,8 +157,8 @@ void main() {
       });
     }
 
-    test('there is a fixture for all 15 client frame types', () {
-      expect(fixtureNames('client'), hasLength(15));
+    test('there is a fixture for all 16 client frame types', () {
+      expect(fixtureNames('client'), hasLength(16));
     });
 
     test('client_hello carries a literal null instance_id', () {
