@@ -364,6 +364,32 @@ final class RemoteController extends ChangeNotifier {
   Future<CommandOutcome> requestProposal(int proposalId) =>
       connection.send(RequestProposal(proposalId: proposalId));
 
+  /// The server advertised [Capability.turnReview]: turn-review frames may
+  /// arrive and `turn_review_action` is accepted.
+  bool get supportsTurnReview =>
+      connection.hello?.hasCapability(Capability.turnReview) ?? false;
+
+  /// Whole-file turn-review decisions (per-hunk is desktop-only). Dropped
+  /// without sending on a server lacking [Capability.turnReview]. An
+  /// `unknown_turn_review` reply means the review was finalized elsewhere
+  /// (usually the desktop) — a benign race; resync so a missed
+  /// `turn_review_resolved` cannot leave the conversation looking blocked.
+  Future<CommandOutcome> turnReviewAction(
+    String turnId,
+    TurnReviewActionKind action, {
+    String? path,
+  }) async {
+    if (!supportsTurnReview) return const CommandDropped();
+    final outcome = await connection.send(
+      TurnReviewAction(turnId: turnId, action: action, path: path),
+    );
+    if (outcome case CommandFail(:final error)
+        when error.code == ErrorCode.unknownTurnReview) {
+      unawaited(connection.send(const RequestSnapshot()));
+    }
+    return outcome;
+  }
+
   /// Workspace paths for an `@` reference; dropped without sending on a
   /// server lacking [Capability.fileCompletions].
   Future<CommandOutcome> requestFileCompletions(String query) {

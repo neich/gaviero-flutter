@@ -1,4 +1,4 @@
-/// Client → server frame payloads (16 types).
+/// Client → server frame payloads (17 types).
 library;
 
 import 'version.dart';
@@ -33,6 +33,7 @@ sealed class ClientPayload {
             terminalId: json['terminal_id'] as int, text: json['text'] as String),
         'request_file_completions' => RequestFileCompletions(
             query: json['query'] as String, limit: json['limit'] as int?),
+        'turn_review_action' => TurnReviewAction.fromJson(json),
         _ => throw FormatException('unknown client frame type: $type'),
       };
 }
@@ -250,6 +251,58 @@ final class ReviewAction extends ClientPayload {
       'action': action.wire,
     };
     _put(map, 'hunk_index', hunkIndex);
+    return map;
+  }
+}
+
+enum TurnReviewActionKind {
+  keepFile('keep_file'),
+  revertFile('revert_file'),
+  keepAll('keep_all'),
+  revertAll('revert_all'),
+  finalize('finalize');
+
+  final String wire;
+  const TurnReviewActionKind(this.wire);
+
+  /// `keep_file` / `revert_file` name a `TurnReviewFile.path`.
+  bool get needsPath => this == keepFile || this == revertFile;
+
+  static TurnReviewActionKind fromWire(String s) => values.firstWhere(
+        (k) => k.wire == s,
+        orElse: () => throw FormatException('unknown turn review action: $s'),
+      );
+}
+
+/// Requires [Capability.turnReview]. Actions are absolute, never toggles, so
+/// a retried command is harmless. Per-hunk decisions are desktop-only.
+final class TurnReviewAction extends ClientPayload {
+  final String turnId;
+  final TurnReviewActionKind action;
+
+  /// Required for `keep_file` / `revert_file`.
+  final String? path;
+
+  const TurnReviewAction({
+    required this.turnId,
+    required this.action,
+    this.path,
+  });
+
+  factory TurnReviewAction.fromJson(Map<String, Object?> json) =>
+      TurnReviewAction(
+        turnId: json['turn_id'] as String,
+        action: TurnReviewActionKind.fromWire(json['action'] as String),
+        path: json['path'] as String?,
+      );
+
+  @override
+  String get frameType => 'turn_review_action';
+
+  @override
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{'turn_id': turnId, 'action': action.wire};
+    _put(map, 'path', path);
     return map;
   }
 }

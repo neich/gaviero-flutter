@@ -73,6 +73,13 @@ final class AppState extends ChangeNotifier {
   final LinkedHashMap<String, PermissionRequest> _permissions =
       LinkedHashMap();
   final LinkedHashMap<int, ProposalData> _proposals = LinkedHashMap();
+
+  /// 1.2 turn reviews awaiting a decision, keyed by `turn_id`, oldest first.
+  final LinkedHashMap<String, TurnReview> _turnReviews = LinkedHashMap();
+
+  /// The latest `turn_review_resolved` per conversation, until dismissed or
+  /// superseded by a new review — a local "what happened" note.
+  final Map<String, TurnReviewResolved> _turnReviewResolutions = {};
   RemoteSettings _settings = const RemoteSettings();
   final Set<String> _replaceTranscript = {};
 
@@ -120,6 +127,39 @@ final class AppState extends ChangeNotifier {
   ProposalData? proposal(int id) => _proposals[id];
   RemoteSettings get settings => _settings;
 
+  List<TurnReview> get openTurnReviews =>
+      List.unmodifiable(_turnReviews.values);
+  TurnReview? turnReview(String turnId) => _turnReviews[turnId];
+
+  /// The oldest review blocking [convId]'s next prompt, or null.
+  TurnReview? pendingTurnReviewFor(String convId) {
+    for (final review in _turnReviews.values) {
+      if (review.convId == convId) return review;
+    }
+    return null;
+  }
+
+  /// The server refuses `send_prompt` on [convId] until this is false.
+  bool hasPendingTurnReview(String convId) =>
+      pendingTurnReviewFor(convId) != null;
+
+  /// Pending reviews no conversation tab can show: no `conv_id`, or a
+  /// conversation this client does not have (closed or not yet listed).
+  /// They are still pending on the desktop, so they get their own list.
+  List<TurnReview> get orphanTurnReviews => [
+        for (final review in _turnReviews.values)
+          if (review.convId == null ||
+              !_conversations.containsKey(review.convId))
+            review,
+      ];
+
+  TurnReviewResolved? turnReviewResolutionFor(String convId) =>
+      _turnReviewResolutions[convId];
+
+  void dismissTurnReviewResolution(String convId) {
+    if (_turnReviewResolutions.remove(convId) != null) notifyListeners();
+  }
+
   /// The TUI restarted — drop everything; a fresh snapshot is coming.
   void clear() {
     _conversations.clear();
@@ -127,6 +167,8 @@ final class AppState extends ChangeNotifier {
     _viewedId = null;
     _permissions.clear();
     _proposals.clear();
+    _turnReviews.clear();
+    _turnReviewResolutions.clear();
     _replaceTranscript.clear();
     notifyListeners();
   }
@@ -162,6 +204,7 @@ final class AppState extends ChangeNotifier {
         _setActive(change.activeId);
       case final ConversationRemoved removed:
         _conversations.remove(removed.convId);
+        _turnReviewResolutions.remove(removed.convId);
         _setActive(removed.activeId);
       case final MessagePage page:
         _applyMessagePage(page);
@@ -240,6 +283,15 @@ final class AppState extends ChangeNotifier {
         if (conv == null) break;
         conv.lastTurnCostUsd = cost.usd;
         conv.sessionCostUsd += cost.usd;
+      case final TurnReviewEvent event:
+        // Pending and updated are both upserts; replace by turn_id.
+        _turnReviews[event.review.turnId] = event.review;
+        final convId = event.review.convId;
+        if (convId != null) _turnReviewResolutions.remove(convId);
+      case final TurnReviewResolved resolved:
+        final review = _turnReviews.remove(resolved.turnId);
+        final convId = resolved.convId ?? review?.convId;
+        if (convId != null) _turnReviewResolutions[convId] = resolved;
       case CommandResult() || CommandError():
         break; // Correlated by the connection layer's command futures.
       case UnknownServerPayload():
@@ -291,6 +343,13 @@ final class AppState extends ChangeNotifier {
     for (final summary in snapshot.openProposals) {
       _proposals[summary.proposalId] = ProposalData(summary: summary);
     }
+    // A snapshot fully replaces the pending reviews (absent ⇒ none).
+    _turnReviews.clear();
+    for (final review in snapshot.openTurnReviews) {
+      _turnReviews[review.turnId] = review;
+    }
+    _turnReviewResolutions
+        .removeWhere((convId, _) => !_conversations.containsKey(convId));
     _settings = snapshot.settings;
     _maybeNeedNewest();
   }

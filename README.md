@@ -5,7 +5,7 @@ once per machine over Tailscale, pick which running instance to attach to,
 and drive every conversation tab independently of the desktop's active tab.
 
 Requires a gaviero TUI with remote enabled (default) on the same Tailscale
-tailnet. Wire protocol **1.1** (`gaviero.v1`); a 1.0 desktop still pairs
+tailnet. Wire protocol **1.2** (`gaviero.v1`); a 1.0 desktop still pairs
 and chats — it just has no instance directory and newest-page requests use
 the `before_seq: 9007199254740991` fallback.
 
@@ -75,6 +75,26 @@ Typing `@` in the composer lists matching workspace files from the desktop
 desktop reads that file into the prompt on send. Needs a gaviero build that
 advertises the `file_completions` capability — older desktops simply show no
 suggestions.
+
+## Turn review
+
+When a chat turn changes files on disk, the desktop holds that
+conversation's next prompt until every changed file is decided. The chat
+view shows a review card listing each file (A/M/D, overlap / binary /
+"can only be accepted" flags) with four decisions, each applied at once:
+**Accept** / **Reject** a file, **Accept all** / **Reject all** for the files
+still undecided. Reject goes back to the pre-prompt version; decisions are
+final. Send is disabled for prompts (slash lines still go) until the last
+file is decided. Rejecting a file edited after the turn needs a confirmation
+that only the desktop can give. Needs a gaviero build that advertises the
+`turn_review` capability.
+
+A review whose conversation has no tab here (closed on the desktop, or none
+named) is never hidden: a badge in the app bar opens a list of them. Values
+from a newer desktop (an unknown change kind, decision, or outcome) show as
+`?` / "decided on desktop" rather than discarding the snapshot that carried
+them. `/reset` and `/clear` say so when a review is pending — clearing the
+chat does not decide it.
 
 ## Build
 

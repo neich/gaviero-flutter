@@ -26,6 +26,11 @@ void showOutcome(
           ErrorCode.conversationStreaming =>
             'The agent is still responding — interrupt it first.',
           ErrorCode.rateLimited => 'Slow down — too many commands.',
+          ErrorCode.turnReviewPending =>
+            'Review the files the last turn changed before sending the '
+                'next prompt.',
+          ErrorCode.unknownTurnReview =>
+            'That review was already finalized — showing the current state.',
           _ => error.message,
         },
   };
