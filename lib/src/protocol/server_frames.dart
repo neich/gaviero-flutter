@@ -1,4 +1,4 @@
-/// Server → client frame payloads (20 types + unknown-type fallback).
+/// Server → client frame payloads (23 types + unknown-type fallback).
 library;
 
 import 'dto.dart';
@@ -41,6 +41,11 @@ sealed class ServerPayload {
         'cost_update' => CostUpdate.fromJson(json),
         'command_result' => CommandResult.fromJson(json),
         'command_error' => CommandError.fromJson(json),
+        'turn_review_pending' =>
+          TurnReviewEvent.fromJson(TurnReviewLifecycle.pending, json),
+        'turn_review_updated' =>
+          TurnReviewEvent.fromJson(TurnReviewLifecycle.updated, json),
+        'turn_review_resolved' => TurnReviewResolved.fromJson(json),
         _ => UnknownServerPayload(type, json),
       };
 }
@@ -150,6 +155,10 @@ final class Snapshot extends ServerPayload {
   final List<ProposalSummary> openProposals;
   final RemoteSettings settings;
 
+  /// 1.2 (`turn_review`): reviews awaiting a decision, oldest first. Omitted
+  /// from the wire when empty (and by every pre-1.2 server).
+  final List<TurnReview> openTurnReviews;
+
   const Snapshot({
     required this.revision,
     required this.conversations,
@@ -158,6 +167,7 @@ final class Snapshot extends ServerPayload {
     required this.openPermissions,
     required this.openProposals,
     required this.settings,
+    this.openTurnReviews = const [],
   });
 
   factory Snapshot.fromJson(Map<String, Object?> json) => Snapshot(
@@ -179,6 +189,11 @@ final class Snapshot extends ServerPayload {
         ],
         settings:
             RemoteSettings.fromJson(json['settings'] as Map<String, Object?>),
+        openTurnReviews: [
+          for (final r in json['open_turn_reviews'] as List<Object?>? ??
+              const [])
+            TurnReview.fromJson(r as Map<String, Object?>)
+        ],
       );
 
   @override
@@ -193,6 +208,8 @@ final class Snapshot extends ServerPayload {
         'open_permissions': [for (final p in openPermissions) p.toJson()],
         'open_proposals': [for (final p in openProposals) p.toJson()],
         'settings': settings.toJson(),
+        if (openTurnReviews.isNotEmpty)
+          'open_turn_reviews': [for (final r in openTurnReviews) r.toJson()],
       };
 }
 
@@ -635,4 +652,80 @@ final class CommandError extends ServerPayload {
   @override
   Map<String, Object?> toPayloadJson() =>
       {'command_id': commandId, 'code': rawCode, 'message': message};
+}
+
+enum TurnReviewLifecycle {
+  pending('turn_review_pending'),
+  updated('turn_review_updated');
+
+  final String frameType;
+  const TurnReviewLifecycle(this.frameType);
+}
+
+/// Shared payload of `turn_review_pending` / `turn_review_updated` (1.2).
+/// Both are upserts keyed by `turn_id`.
+final class TurnReviewEvent extends ServerPayload {
+  final TurnReviewLifecycle lifecycle;
+  final TurnReview review;
+
+  const TurnReviewEvent({required this.lifecycle, required this.review});
+
+  factory TurnReviewEvent.fromJson(
+          TurnReviewLifecycle lifecycle, Map<String, Object?> json) =>
+      TurnReviewEvent(
+        lifecycle: lifecycle,
+        review: TurnReview.fromJson(json['review'] as Map<String, Object?>),
+      );
+
+  @override
+  String get frameType => lifecycle.frameType;
+
+  @override
+  Map<String, Object?> toPayloadJson() => {'review': review.toJson()};
+}
+
+/// `turn_review_resolved` (1.2): the review was finalized — from the phone
+/// or the desktop — and the conversation is unblocked.
+final class TurnReviewResolved extends ServerPayload {
+  final String turnId;
+  final String? convId;
+  final int kept;
+  final int reverted;
+
+  /// `path: reason` for decisions that could not be applied (e.g. a revert
+  /// of a file edited after the turn, which only the desktop can confirm).
+  final List<String> failed;
+
+  const TurnReviewResolved({
+    required this.turnId,
+    this.convId,
+    required this.kept,
+    required this.reverted,
+    this.failed = const [],
+  });
+
+  factory TurnReviewResolved.fromJson(Map<String, Object?> json) =>
+      TurnReviewResolved(
+        turnId: json['turn_id'] as String,
+        convId: json['conv_id'] as String?,
+        kept: json['kept'] as int,
+        reverted: json['reverted'] as int,
+        failed: [
+          for (final f in json['failed'] as List<Object?>? ?? const [])
+            f as String
+        ],
+      );
+
+  @override
+  String get frameType => 'turn_review_resolved';
+
+  @override
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{'turn_id': turnId};
+    _put(map, 'conv_id', convId);
+    map['kept'] = kept;
+    map['reverted'] = reverted;
+    if (failed.isNotEmpty) map['failed'] = failed;
+    return map;
+  }
 }

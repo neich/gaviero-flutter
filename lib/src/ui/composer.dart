@@ -4,7 +4,9 @@
 /// `hello.confirm_required` raise a dialog and send `confirmed: true`.
 /// A `slash_not_allowed` reply renders as a calm inline notice — it is
 /// policy, not a failure. Typing `@` asks the desktop for workspace paths
-/// (`file_completions`) and offers them above the input.
+/// (`file_completions`) and offers them above the input. While the viewed
+/// conversation has a pending turn review (`turn_review`) prompts are held:
+/// Send is disabled for anything but a slash line, with a hint.
 library;
 
 import 'dart:async';
@@ -81,6 +83,15 @@ class _ComposerState extends State<Composer> {
   void initState() {
     super.initState();
     _text.addListener(_onTextChanged);
+  }
+
+  /// The viewed conversation's last turn changed files and its review is not
+  /// finalized: the server refuses `send_prompt` (slash commands still go).
+  bool get _turnReviewPending {
+    final convId = controller.state.viewedId;
+    return convId != null &&
+        controller.supportsTurnReview &&
+        controller.state.hasPendingTurnReview(convId);
   }
 
   bool get _completionsSupported =>
@@ -168,13 +179,19 @@ class _ComposerState extends State<Composer> {
   }
 
   Future<bool> _confirm(String command) async {
+    // Clearing the chat does not decide its turn review: the next prompt
+    // stays held, so say so before the user expects a fresh start.
+    final reviewNote = _turnReviewPending
+        ? ' The pending turn review stays open — the next prompt is still '
+            'held until every file is accepted or rejected.'
+        : '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Send $command?'),
         content: Text(switch (command) {
           '/reset' || '/clear' =>
-            'This clears the conversation on the desktop as well.',
+            'This clears the conversation on the desktop as well.$reviewNote',
           '/autoapprove' || '/yolo' =>
             'The agent will act without asking for approval — on the '
                 'desktop too.',
@@ -220,6 +237,7 @@ class _ComposerState extends State<Composer> {
       await _sendSlashLine(text);
       return;
     }
+    if (_turnReviewPending) return; // Send is disabled; the hint explains.
     final maxBytes = controller.connection.hello?.limits.maxPromptBytes;
     if (maxBytes != null && utf8.encode(text).length > maxBytes) {
       setState(() => _inlineNotice =
@@ -252,11 +270,32 @@ class _ComposerState extends State<Composer> {
     final allowed =
         controller.connection.hello?.allowedSlashCommands ?? const [];
     final suggesting = connected && _suggestions.isNotEmpty;
+    final reviewPending = _turnReviewPending;
     return SafeArea(
       top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (reviewPending)
+            Padding(
+              key: const Key('turn-review-send-hint'),
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.fact_check_outlined,
+                      size: 15,
+                      color: Theme.of(context).colorScheme.tertiary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Accept or reject the changed files above to send the '
+                      'next prompt.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (_inlineNotice != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 6, 0),
@@ -313,8 +352,11 @@ class _ComposerState extends State<Composer> {
                     maxLines: 6,
                     textInputAction: TextInputAction.newline,
                     decoration: InputDecoration(
-                      hintText:
-                          connected ? 'Message the agent…' : 'Offline',
+                      hintText: !connected
+                          ? 'Offline'
+                          : reviewPending
+                              ? 'Review pending — slash commands only'
+                              : 'Message the agent…',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
                       ),
@@ -338,10 +380,18 @@ class _ComposerState extends State<Composer> {
                     icon: const Icon(Icons.stop),
                   )
                 else
-                  IconButton.filled(
-                    tooltip: 'Send',
-                    onPressed: connected ? _send : null,
-                    icon: const Icon(Icons.arrow_upward),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _text,
+                    builder: (context, value, _) => IconButton.filled(
+                      tooltip: 'Send',
+                      // A pending turn review holds prompts, not slash lines.
+                      onPressed: connected &&
+                              (!reviewPending ||
+                                  value.text.trimLeft().startsWith('/'))
+                          ? _send
+                          : null,
+                      icon: const Icon(Icons.arrow_upward),
+                    ),
                   ),
               ],
             ),

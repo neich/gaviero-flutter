@@ -14,6 +14,7 @@ import 'message_widgets.dart';
 import 'permission_card.dart';
 import 'review_screen.dart';
 import 'shell_screen.dart';
+import 'turn_review_card.dart';
 
 class ChatScreen extends StatefulWidget {
   final RemoteController controller;
@@ -50,6 +51,15 @@ class _ChatScreenState extends State<ChatScreen> {
       listenable: controller,
       builder: (context, _) {
         final conv = controller.state.viewed;
+        final turnReviews = controller.supportsTurnReview;
+        final pendingReview = turnReviews && conv != null
+            ? controller.state.pendingTurnReviewFor(conv.summary.convId)
+            : null;
+        final resolvedReview =
+            turnReviews && conv != null && pendingReview == null
+                ? controller.state
+                    .turnReviewResolutionFor(conv.summary.convId)
+                : null;
         return Scaffold(
           drawer: ConversationDrawer(controller: controller),
           appBar: AppBar(
@@ -90,6 +100,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     final other = controller.state.oldestOtherPermission;
                     if (other != null) controller.state.view(other.convId);
                   },
+                ),
+              if (controller.supportsTurnReview &&
+                  controller.state.orphanTurnReviews.isNotEmpty)
+                IconButton(
+                  key: const Key('orphan-turn-reviews'),
+                  tooltip: 'Turn reviews without a conversation tab',
+                  icon: Badge.count(
+                    count: controller.state.orphanTurnReviews.length,
+                    child: const Icon(Icons.fact_check_outlined),
+                  ),
+                  onPressed: () =>
+                      Navigator.of(context).push(MaterialPageRoute(
+                    builder: (context) =>
+                        OrphanTurnReviewsScreen(controller: controller),
+                  )),
                 ),
               if (controller.state.openProposals.isNotEmpty)
                 IconButton(
@@ -141,6 +166,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? const Center(child: Text('No conversation'))
                     : _MessageList(conv: conv, scroll: _scroll),
               ),
+              if (resolvedReview != null)
+                TurnReviewResolvedBanner(
+                  resolved: resolvedReview,
+                  onDismiss: () => controller.state
+                      .dismissTurnReviewResolution(conv!.summary.convId),
+                ),
+              if (pendingReview != null)
+                TurnReviewCard(controller: controller, review: pendingReview),
               if (controller.state.viewedPermissions.isNotEmpty)
                 PermissionCard(
                   controller: controller,
@@ -248,6 +281,12 @@ class _ConversationTabs extends StatelessWidget {
                           .any((p) => p.convId == conv.summary.convId)) ...[
                         const SizedBox(width: 4),
                         const Icon(Icons.gavel, size: 14),
+                      ],
+                      if (controller.supportsTurnReview &&
+                          controller.state
+                              .hasPendingTurnReview(conv.summary.convId)) ...[
+                        const SizedBox(width: 4),
+                        const Icon(Icons.fact_check_outlined, size: 14),
                       ],
                       if (conv.unread > 0) ...[
                         const SizedBox(width: 4),

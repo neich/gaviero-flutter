@@ -43,6 +43,7 @@ Snapshot snapshot({
   bool hasOlder = true,
   List<PermissionRequest> permissions = const [],
   List<ProposalSummary> proposals = const [],
+  List<TurnReview> turnReviews = const [],
 }) {
   final convs = conversations ?? [summary('c1'), summary('c2')];
   return Snapshot(
@@ -58,8 +59,26 @@ Snapshot snapshot({
     openPermissions: permissions,
     openProposals: proposals,
     settings: const RemoteSettings(),
+    openTurnReviews: turnReviews,
   );
 }
+
+TurnReview turnReview(String turnId, String convId,
+        {TurnFileDecision decision = TurnFileDecision.keep}) =>
+    TurnReview(
+      turnId: turnId,
+      convId: convId,
+      outcome: TurnOutcome.completed,
+      files: [
+        TurnReviewFile(
+          path: 'src/a.rs',
+          change: TurnFileChange.modified,
+          decision: decision,
+          revertible: true,
+          binary: false,
+        ),
+      ],
+    );
 
 void main() {
   test('applying the same snapshot twice is idempotent', () {
@@ -239,6 +258,123 @@ void main() {
     state.applyEnvelope(env(const ProposalFinalized(
         proposalId: 42, path: 'src/a.rs', outcome: ProposalOutcome.accepted)));
     expect(state.openProposals, isEmpty);
+  });
+
+  group('turn reviews (1.2)', () {
+    test('a snapshot fully replaces the pending reviews', () {
+      final state = AppState();
+      state.applyEnvelope(env(snapshot(turnReviews: [
+        turnReview('t1', 'c1'),
+        turnReview('t2', 'c2'),
+      ])));
+      expect(state.openTurnReviews.map((r) => r.turnId), ['t1', 't2']);
+      expect(state.hasPendingTurnReview('c1'), isTrue);
+      expect(state.hasPendingTurnReview('c2'), isTrue);
+
+      // A later snapshot without t1 drops it; absent field ⇒ none at all.
+      state.applyEnvelope(
+          env(snapshot(turnReviews: [turnReview('t2', 'c2')]), seq: 2));
+      expect(state.openTurnReviews.map((r) => r.turnId), ['t2']);
+      expect(state.hasPendingTurnReview('c1'), isFalse);
+      state.applyEnvelope(env(snapshot(), seq: 3));
+      expect(state.openTurnReviews, isEmpty);
+    });
+
+    test('reviews no tab can show are listed as orphans', () {
+      final state = AppState();
+      state.applyEnvelope(env(snapshot(turnReviews: [
+        turnReview('t1', 'c1'),
+        // Conversation closed on the desktop / not listed here.
+        turnReview('t2', 'gone'),
+      ])));
+      expect(state.orphanTurnReviews.map((r) => r.turnId), ['t2']);
+
+      // No conv_id at all is an orphan too.
+      state.applyEnvelope(env(const TurnReviewEvent(
+        lifecycle: TurnReviewLifecycle.pending,
+        review: TurnReview(
+            turnId: 't3', outcome: TurnOutcome.completed, files: []),
+      )));
+      expect(state.orphanTurnReviews.map((r) => r.turnId), ['t2', 't3']);
+
+      state.applyEnvelope(env(const TurnReviewResolved(
+          turnId: 't2', convId: 'gone', kept: 1, reverted: 0)));
+      expect(state.orphanTurnReviews.map((r) => r.turnId), ['t3']);
+    });
+
+    test('pending and updated upsert by turn_id', () {
+      final state = AppState();
+      state.applyEnvelope(env(snapshot()));
+      state.applyEnvelope(env(TurnReviewEvent(
+          lifecycle: TurnReviewLifecycle.pending,
+          review: turnReview('t1', 'c1'))));
+      // Re-broadcast of the same pending frame is idempotent.
+      state.applyEnvelope(env(TurnReviewEvent(
+          lifecycle: TurnReviewLifecycle.pending,
+          review: turnReview('t1', 'c1'))));
+      expect(state.openTurnReviews, hasLength(1));
+      expect(state.pendingTurnReviewFor('c1')!.turnId, 't1');
+      expect(state.pendingTurnReviewFor('c2'), isNull);
+
+      state.applyEnvelope(env(TurnReviewEvent(
+          lifecycle: TurnReviewLifecycle.updated,
+          review: turnReview('t1', 'c1', decision: TurnFileDecision.revert))));
+      expect(state.openTurnReviews, hasLength(1));
+      expect(state.turnReview('t1')!.files.single.decision,
+          TurnFileDecision.revert);
+    });
+
+    test('resolved removes the review and records a summary until dismissed '
+        'or a new review opens', () {
+      final state = AppState();
+      state.applyEnvelope(env(snapshot(turnReviews: [turnReview('t1', 'c1')])));
+      state.applyEnvelope(env(const TurnReviewResolved(
+          turnId: 't1',
+          convId: 'c1',
+          kept: 0,
+          reverted: 1,
+          failed: ['src/a.rs: edited after the turn'])));
+      expect(state.openTurnReviews, isEmpty);
+      expect(state.hasPendingTurnReview('c1'), isFalse);
+      final resolution = state.turnReviewResolutionFor('c1')!;
+      expect(resolution.reverted, 1);
+      expect(resolution.failed, hasLength(1));
+
+      state.dismissTurnReviewResolution('c1');
+      expect(state.turnReviewResolutionFor('c1'), isNull);
+
+      // Resolved without conv_id: attributed via the review we knew.
+      state.applyEnvelope(env(TurnReviewEvent(
+          lifecycle: TurnReviewLifecycle.pending,
+          review: turnReview('t2', 'c1'))));
+      state.applyEnvelope(env(
+          const TurnReviewResolved(turnId: 't2', kept: 1, reverted: 0)));
+      expect(state.turnReviewResolutionFor('c1')!.kept, 1);
+
+      // A new review for the conversation supersedes the old summary.
+      state.applyEnvelope(env(TurnReviewEvent(
+          lifecycle: TurnReviewLifecycle.pending,
+          review: turnReview('t3', 'c1'))));
+      expect(state.turnReviewResolutionFor('c1'), isNull);
+    });
+
+    test('a resolved frame for an unknown review is harmless', () {
+      final state = AppState();
+      state.applyEnvelope(env(snapshot(turnReviews: [turnReview('t1', 'c1')])));
+      state.applyEnvelope(env(
+          const TurnReviewResolved(turnId: 'gone', kept: 0, reverted: 0)));
+      expect(state.openTurnReviews.single.turnId, 't1');
+    });
+
+    test('clear() drops reviews and summaries', () {
+      final state = AppState();
+      state.applyEnvelope(env(snapshot(turnReviews: [turnReview('t1', 'c1')])));
+      state.applyEnvelope(env(const TurnReviewResolved(
+          turnId: 't0', convId: 'c2', kept: 1, reverted: 0)));
+      state.clear();
+      expect(state.openTurnReviews, isEmpty);
+      expect(state.turnReviewResolutionFor('c2'), isNull);
+    });
   });
 
   test('token usage and cost accumulate per conversation', () {

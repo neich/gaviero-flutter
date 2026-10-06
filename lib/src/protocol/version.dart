@@ -1,7 +1,7 @@
 /// Wire protocol version, subprotocol, and paths — vendored from
 /// `protocol/protocol.schema.json` (Plan A owns 1.0, Plan C owns the 1.1
-/// additions; a codec test asserts these constants match the vendored
-/// schema).
+/// additions, 1.2 adds turn review; a codec test asserts these constants
+/// match the vendored schema).
 library;
 
 final class ProtocolVersion {
@@ -29,7 +29,7 @@ final class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-const protocolVersion = ProtocolVersion(1, 1);
+const protocolVersion = ProtocolVersion(1, 2);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 
@@ -55,6 +55,10 @@ abstract final class Capability {
 
   /// `request_file_completions` lists workspace paths for `@` references.
   static const fileCompletions = 'file_completions';
+
+  /// 1.2: `turn_review_*` frames, `snapshot.open_turn_reviews`, and the
+  /// `turn_review_action` command.
+  static const turnReview = 'turn_review';
 }
 
 /// `before_seq` to send to a server without [Capability.latestPage]: 2^53 − 1,

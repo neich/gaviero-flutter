@@ -157,8 +157,8 @@ void main() {
       });
     }
 
-    test('there is a fixture for all 16 client frame types', () {
-      expect(fixtureNames('client'), hasLength(16));
+    test('there is a fixture for all 17 client frame types', () {
+      expect(fixtureNames('client'), hasLength(17));
     });
 
     test('client_hello carries a literal null instance_id', () {
@@ -184,8 +184,165 @@ void main() {
       });
     }
 
-    test('there is a fixture for all 20 server frame types', () {
-      expect(fixtureNames('server'), hasLength(20));
+    test('there is a fixture for all 23 server frame types', () {
+      expect(fixtureNames('server'), hasLength(23));
+    });
+  });
+
+  group('1.2 turn review', () {
+    test('turn_review_pending decodes every field', () {
+      final payload = ServerEnvelope.fromJson(
+              readFixture('server', 'turn_review_pending'))
+          .payload as TurnReviewEvent;
+      expect(payload.lifecycle, TurnReviewLifecycle.pending);
+      final review = payload.review;
+      expect(review.turnId, 'conv-3-1759600000000');
+      expect(review.convId, 'conv-3');
+      expect(review.outcome, TurnOutcome.completed);
+      expect(review.warnings, isEmpty);
+      expect(review.files.map((f) => f.path),
+          ['src/parser.rs', 'assets/logo.png']);
+      final logo = review.files[1];
+      expect(logo.change, TurnFileChange.added);
+      expect(logo.decision, TurnFileDecision.keep);
+      expect(logo.revertible, isTrue);
+      expect(logo.binary, isTrue);
+      expect(logo.overlapWith, ['conv-1-1759599990000']);
+      expect(review.files[0].overlapWith, isEmpty);
+      expect(review.files[0].toJson().containsKey('overlap_with'), isFalse,
+          reason: 'empty overlap_with is omitted, never emitted');
+    });
+
+    test('turn_review_updated carries revert_hunks, outcome, and warnings',
+        () {
+      final payload = ServerEnvelope.fromJson(
+              readFixture('server', 'turn_review_updated'))
+          .payload as TurnReviewEvent;
+      expect(payload.lifecycle, TurnReviewLifecycle.updated);
+      expect(payload.review.outcome, TurnOutcome.cancelled);
+      expect(payload.review.files.map((f) => f.decision),
+          [TurnFileDecision.revertHunks, TurnFileDecision.revert]);
+      expect(payload.review.files[1].change, TurnFileChange.deleted);
+      expect(payload.review.warnings, hasLength(1));
+    });
+
+    test('turn_review_resolved decodes; empty failed is omitted', () {
+      final json = readFixture('server', 'turn_review_resolved');
+      final resolved =
+          ServerEnvelope.fromJson(json).payload as TurnReviewResolved;
+      expect(resolved.turnId, 'conv-3-1759600000000');
+      expect(resolved.convId, 'conv-3');
+      expect(resolved.kept, 1);
+      expect(resolved.reverted, 1);
+      expect(resolved.failed.single, startsWith('src/big.bin: '));
+
+      final payload = json['payload'] as Map<String, Object?>
+        ..remove('failed')
+        ..remove('conv_id');
+      final bare = TurnReviewResolved.fromJson(payload);
+      expect(bare.failed, isEmpty);
+      expect(bare.convId, isNull);
+      expect(bare.toPayloadJson(),
+          {'turn_id': 'conv-3-1759600000000', 'kept': 1, 'reverted': 1});
+    });
+
+    test('a snapshot without open_turn_reviews decodes to none and '
+        're-encodes without the key', () {
+      final json = readFixture('server', 'snapshot');
+      final payload = json['payload'] as Map<String, Object?>;
+      expect(payload.containsKey('open_turn_reviews'), isFalse);
+      final snapshot = ServerEnvelope.fromJson(json).payload as Snapshot;
+      expect(snapshot.openTurnReviews, isEmpty);
+      expect(snapshot.toPayloadJson().containsKey('open_turn_reviews'),
+          isFalse);
+    });
+
+    test('snapshot.open_turn_reviews decodes and round-trips', () {
+      final json = readFixture('server', 'snapshot');
+      final review = (readFixture('server', 'turn_review_updated')['payload']
+          as Map<String, Object?>)['review'];
+      (json['payload'] as Map<String, Object?>)['open_turn_reviews'] = [
+        review
+      ];
+      final envelope = ServerEnvelope.fromJson(json);
+      final snapshot = envelope.payload as Snapshot;
+      expect(snapshot.openTurnReviews.single.turnId, 'conv-3-1759600000000');
+      expect(deepEquals(envelope.toJson(), json), isTrue);
+    });
+
+    test('values from a newer server decode to unknown instead of dropping '
+        'the snapshot, and re-encode verbatim', () {
+      final json = readFixture('server', 'snapshot');
+      final review = jsonDecode(jsonEncode(
+          (readFixture('server', 'turn_review_updated')['payload']
+              as Map<String, Object?>)['review'])) as Map<String, Object?>;
+      review['outcome'] = 'timed_out';
+      final file = (review['files'] as List<Object?>).first
+          as Map<String, Object?>;
+      file['change'] = 'renamed';
+      file['decision'] = 'revert_lines';
+      (json['payload'] as Map<String, Object?>)['open_turn_reviews'] = [
+        review
+      ];
+
+      final envelope = ServerEnvelope.fromJson(json);
+      final decoded = (envelope.payload as Snapshot).openTurnReviews.single;
+      expect(decoded.outcome, TurnOutcome.unknown);
+      expect(decoded.files.first.change, TurnFileChange.unknown);
+      expect(decoded.files.first.change.badge, '?');
+      expect(decoded.files.first.decision, TurnFileDecision.unknown);
+      expect(deepEquals(envelope.toJson(), json), isTrue,
+          reason: 'unknown values must re-encode as the server sent them');
+    });
+
+    test('turn_review_action encodes path only for per-file actions', () {
+      final fixture = ClientEnvelope.fromJson(
+              readFixture('client', 'turn_review_action'))
+          .payload as TurnReviewAction;
+      expect(fixture.action, TurnReviewActionKind.revertFile);
+      expect(fixture.path, 'src/parser.rs');
+      expect(TurnReviewActionKind.keepFile.needsPath, isTrue);
+      expect(TurnReviewActionKind.finalize.needsPath, isFalse);
+
+      const finalize = TurnReviewAction(
+          turnId: 't1', action: TurnReviewActionKind.finalize);
+      expect(finalize.toPayloadJson(), {'turn_id': 't1', 'action': 'finalize'});
+      expect(
+          [for (final k in TurnReviewActionKind.values) k.wire],
+          ['keep_file', 'revert_file', 'keep_all', 'revert_all', 'finalize']);
+    });
+
+    test('the 1.2 error codes decode to known values', () {
+      final json = readFixture('server', 'command_error');
+      final payload = json['payload'] as Map<String, Object?>;
+      payload['code'] = 'turn_review_pending';
+      expect((ServerEnvelope.fromJson(json).payload as CommandError).code,
+          ErrorCode.turnReviewPending);
+      payload['code'] = 'unknown_turn_review';
+      final err = ServerEnvelope.fromJson(json).payload as CommandError;
+      expect(err.code, ErrorCode.unknownTurnReview);
+      expect(err.toPayloadJson()['code'], 'unknown_turn_review');
+    });
+
+    test('the schema error-code enum matches ErrorCode', () {
+      final schema = File('protocol/protocol.schema.json').readAsStringSync();
+      for (final code in ErrorCode.values) {
+        if (code == ErrorCode.unrecognized) continue;
+        expect(schema, contains('"${code.wire}"'));
+      }
+    });
+
+    test('the turn_review capability is feature-detected', () {
+      final json = readFixture('server', 'hello');
+      final payload = json['payload'] as Map<String, Object?>;
+      expect((ServerEnvelope.fromJson(json).payload as Hello)
+          .hasCapability(Capability.turnReview), isFalse);
+      payload['capabilities'] = [
+        ...(payload['capabilities'] as List<Object?>),
+        'turn_review',
+      ];
+      expect((ServerEnvelope.fromJson(json).payload as Hello)
+          .hasCapability(Capability.turnReview), isTrue);
     });
   });
 

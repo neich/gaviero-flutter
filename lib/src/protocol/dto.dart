@@ -781,6 +781,204 @@ enum ProposalOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// turn review (1.2, `turn_review` capability)
+//
+// These enums decode unrecognised values to `unknown` instead of throwing.
+// `open_turn_reviews` rides inside `snapshot`, and an undecodable frame is
+// dropped whole (`Connection._onMessage`), so a value added by a future
+// server minor would otherwise cost the client its entire snapshot. Skipping
+// just the review is worse: it would still block its conversation on the
+// server with nothing on screen explaining why. The DTOs keep the raw wire
+// string so re-encoding reproduces what the server sent.
+
+enum TurnFileChange {
+  added,
+  modified,
+  deleted,
+
+  /// A kind this client does not know (newer server).
+  unknown;
+
+  static TurnFileChange fromWire(String s) => switch (s) {
+        'added' => added,
+        'modified' => modified,
+        'deleted' => deleted,
+        _ => unknown,
+      };
+
+  String get wire => name;
+
+  /// One-letter badge, as the desktop shows it.
+  String get badge => switch (this) {
+        added => 'A',
+        modified => 'M',
+        deleted => 'D',
+        unknown => '?',
+      };
+}
+
+enum TurnFileDecision {
+  /// Not decided yet: the only state Accept / Reject apply to.
+  pending,
+
+  /// Accepted: the agent's version stays.
+  keep,
+
+  /// Rejected: already back to the pre-prompt version on disk.
+  revert,
+
+  /// Some hunks reverted. Current desktops no longer produce it.
+  revertHunks,
+
+  /// A decision this client does not know — taken on the desktop.
+  unknown;
+
+  static TurnFileDecision fromWire(String s) => switch (s) {
+        'pending' => pending,
+        'keep' => keep,
+        'revert' => revert,
+        'revert_hunks' => revertHunks,
+        _ => unknown,
+      };
+
+  String get wire => switch (this) {
+        pending => 'pending',
+        keep => 'keep',
+        revert => 'revert',
+        revertHunks => 'revert_hunks',
+        unknown => 'unknown',
+      };
+}
+
+enum TurnOutcome {
+  completed,
+  cancelled,
+  failed,
+
+  /// An outcome this client does not know: shown neutrally.
+  unknown;
+
+  static TurnOutcome fromWire(String s) => switch (s) {
+        'completed' => completed,
+        'cancelled' => cancelled,
+        'failed' => failed,
+        _ => unknown,
+      };
+
+  String get wire => name;
+}
+
+/// One file a turn changed on disk.
+final class TurnReviewFile {
+  /// Workspace-folder-relative, `/`-separated. Echoed by `turn_review_action`.
+  final String path;
+  final TurnFileChange change;
+  final TurnFileDecision decision;
+
+  /// False when the pre-turn content was not stored: keep is the only option.
+  final bool revertible;
+  final bool binary;
+
+  /// Turn ids whose window overlapped this turn and changed the same path.
+  final List<String> overlapWith;
+
+  /// Wire strings as received — kept so an `unknown` value re-encodes as the
+  /// server sent it. `null` when built locally.
+  final String? changeWire;
+  final String? decisionWire;
+
+  const TurnReviewFile({
+    required this.path,
+    required this.change,
+    required this.decision,
+    required this.revertible,
+    required this.binary,
+    this.overlapWith = const [],
+    this.changeWire,
+    this.decisionWire,
+  });
+
+  factory TurnReviewFile.fromJson(Map<String, Object?> json) {
+    final change = json['change'] as String;
+    final decision = json['decision'] as String;
+    return TurnReviewFile(
+      path: json['path'] as String,
+      change: TurnFileChange.fromWire(change),
+      decision: TurnFileDecision.fromWire(decision),
+      revertible: json['revertible'] as bool,
+      binary: json['binary'] as bool,
+      overlapWith: [
+        for (final t in json['overlap_with'] as List<Object?>? ?? const [])
+          t as String
+      ],
+      changeWire: change,
+      decisionWire: decision,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    final map = <String, Object?>{
+      'path': path,
+      'change': changeWire ?? change.wire,
+      'decision': decisionWire ?? decision.wire,
+      'revertible': revertible,
+      'binary': binary,
+    };
+    if (overlapWith.isNotEmpty) map['overlap_with'] = overlapWith;
+    return map;
+  }
+}
+
+/// A turn whose file changes await the mandatory review. While one is open
+/// for a conversation the server refuses its next `send_prompt`.
+final class TurnReview {
+  final String turnId;
+  final String? convId;
+  final TurnOutcome outcome;
+  final List<TurnReviewFile> files;
+  final List<String> warnings;
+
+  /// Outcome wire string as received (see [TurnReviewFile.changeWire]).
+  final String? outcomeWire;
+
+  const TurnReview({
+    required this.turnId,
+    this.convId,
+    required this.outcome,
+    required this.files,
+    this.warnings = const [],
+    this.outcomeWire,
+  });
+
+  factory TurnReview.fromJson(Map<String, Object?> json) {
+    final outcome = json['outcome'] as String;
+    return TurnReview(
+      turnId: json['turn_id'] as String,
+      convId: json['conv_id'] as String?,
+      outcome: TurnOutcome.fromWire(outcome),
+      files: [
+        for (final f in json['files'] as List<Object?>)
+          TurnReviewFile.fromJson(f as Map<String, Object?>)
+      ],
+      warnings: [
+        for (final w in json['warnings'] as List<Object?>? ?? const [])
+          w as String
+      ],
+      outcomeWire: outcome,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    final map = <String, Object?>{'turn_id': turnId};
+    _put(map, 'conv_id', convId);
+    map['outcome'] = outcomeWire ?? outcome.wire;
+    map['files'] = [for (final f in files) f.toJson()];
+    if (warnings.isNotEmpty) map['warnings'] = warnings;
+    return map;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // snapshot
 
 /// Explicit allow-list DTO — never raw workspace settings.
@@ -874,6 +1072,14 @@ enum ErrorCode {
   rateLimited('rate_limited'),
   duplicateCommand('duplicate_command'),
   internalError('internal_error'),
+
+  /// 1.2: `send_prompt` refused — the conversation's previous turn changed
+  /// files and its review is not finalized yet.
+  turnReviewPending('turn_review_pending'),
+
+  /// 1.2: `turn_review_action` named a review that is already finalized
+  /// (possibly by the desktop). A benign race, like the stale codes.
+  unknownTurnReview('unknown_turn_review'),
   unrecognized('unrecognized');
 
   final String wire;
