@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 
 import '../protocol/protocol.dart';
 import '../services/directory_client.dart';
+import '../services/relay_alerts.dart';
 import '../services/instance_store.dart';
 import '../services/secure_store.dart';
 import '../transport/connection.dart';
@@ -20,6 +21,7 @@ final class RemoteController extends ChangeNotifier {
   final AppState state;
   final InstanceStore instanceStore;
   final DirectoryClient directoryClient;
+  final RelayAlerts relayAlerts;
 
   InstanceRecord? _current;
   String? _needsPairingHost;
@@ -31,16 +33,19 @@ final class RemoteController extends ChangeNotifier {
     AppState? state,
     InstanceStore? instanceStore,
     DirectoryClient? directoryClient,
+    RelayAlerts? relayAlerts,
   }) : connection = connection ?? RemoteConnection(),
        state = state ?? AppState(),
        instanceStore = instanceStore ?? InstanceStore(),
-       directoryClient = directoryClient ?? DirectoryClient() {
+       directoryClient = directoryClient ?? DirectoryClient(),
+       relayAlerts = relayAlerts ?? RelayAlerts() {
     this.connection.onEnvelope = _onEnvelope;
     this.connection.onInstanceChanged = this.state.clear;
     this.connection.onTokenInvalid = () async {
       final host = _current?.machineHost;
       if (host != null) {
         await this.instanceStore.markMachineNeedsPairing(host);
+        unawaited(this.relayAlerts.sync(this.instanceStore.doc));
       }
       _needsPairingHost = host;
       _current = null;
@@ -62,6 +67,7 @@ final class RemoteController extends ChangeNotifier {
   /// [StoreDocument.lastInstance] when present.
   Future<bool> initialize() async {
     await instanceStore.load();
+    unawaited(relayAlerts.sync(instanceStore.doc));
     notifyListeners();
     await refreshDirectory();
     final last = instanceStore.doc.lastInstance;
@@ -81,6 +87,9 @@ final class RemoteController extends ChangeNotifier {
         directoryUrl: config.directoryUrl,
         pairedAt: DateTime.now().toUtc().toIso8601String(),
         needsPairing: false,
+        tlsCa: config.tlsCa,
+        relayHost: config.relayHost,
+        relaySecret: config.relaySecret,
       ),
     );
     final inst = InstanceRecord(
@@ -90,6 +99,12 @@ final class RemoteController extends ChangeNotifier {
       url: config.url,
     );
     await instanceStore.upsertInstance(inst);
+    if (config.relayHost != null) {
+      // The relay alert service replaces ntfy; it stays reliable under OEM
+      // battery managers only with the exemption (asked once per pairing).
+      unawaited(relayAlerts.sync(instanceStore.doc));
+      unawaited(relayAlerts.requestBatteryExemption());
+    }
     _needsPairingHost = null;
     notifyListeners();
     await connect(inst);
@@ -108,6 +123,11 @@ final class RemoteController extends ChangeNotifier {
         directoryUrl: 'https://$host:$directoryPort$instancesPath',
         pairedAt: DateTime.now().toUtc().toIso8601String(),
         needsPairing: false,
+        // Manual entry cannot carry a CA: keep the one a QR pairing stored
+        // (a relay machine is unreachable without it).
+        tlsCa: instanceStore.machine(host)?.tlsCa,
+        relayHost: instanceStore.machine(host)?.relayHost,
+        relaySecret: instanceStore.machine(host)?.relaySecret,
       ),
     );
     _needsPairingHost = null;
@@ -135,7 +155,12 @@ final class RemoteController extends ChangeNotifier {
             connection.phase == ConnectionPhase.handshaking)) {
       return;
     }
-    await connection.start(Uri.parse(inst.url), machine.token);
+    await connection.start(
+      Uri.parse(inst.url),
+      machine.token,
+      tlsCa: machine.tlsCa,
+      relayHost: machine.relayHost,
+    );
   }
 
   Future<void> disconnect() async {
@@ -159,6 +184,7 @@ final class RemoteController extends ChangeNotifier {
   Future<void> forgetMachine(String host) async {
     if (_current?.machineHost == host) await disconnect();
     await instanceStore.forgetMachine(host);
+    unawaited(relayAlerts.sync(instanceStore.doc));
     if (_needsPairingHost == host) _needsPairingHost = null;
     notifyListeners();
   }
@@ -198,7 +224,11 @@ final class RemoteController extends ChangeNotifier {
       displayName: hello.workspace.displayName,
     );
     _current = updated;
-    unawaited(instanceStore.upsertInstance(updated));
+    unawaited(
+      instanceStore
+          .upsertInstance(updated)
+          .then((_) => relayAlerts.sync(instanceStore.doc)),
+    );
     final machine = instanceStore.machine(current.machineHost);
     final directoryUrl = hello.machine?.directoryUrl;
     if (machine != null && directoryUrl != null) {
