@@ -20,12 +20,26 @@ final class MachineRecord {
   /// Token is dead (401 / 4001 / 4006); user must pair again.
   final bool needsPairing;
 
+  /// The machine's private CA (base64 DER) from the QR `tls_ca`, when it is
+  /// reached through a VPS relay. Null ⇒ default system trust.
+  final String? tlsCa;
+
+  /// gaviero-relay: dial this host (`host[:port]`, default 443) for every
+  /// connection to the machine, naming the instance by SNI.
+  final String? relayHost;
+
+  /// gaviero-relay: bearer secret for the relay's notification stream.
+  final String? relaySecret;
+
   const MachineRecord({
     required this.host,
     required this.token,
     this.directoryUrl,
     required this.pairedAt,
     this.needsPairing = false,
+    this.tlsCa,
+    this.relayHost,
+    this.relaySecret,
   });
 
   MachineRecord copyWith({
@@ -40,6 +54,9 @@ final class MachineRecord {
         directoryUrl: directoryUrl ?? this.directoryUrl,
         pairedAt: pairedAt ?? this.pairedAt,
         needsPairing: needsPairing ?? this.needsPairing,
+        tlsCa: tlsCa,
+        relayHost: relayHost,
+        relaySecret: relaySecret,
       );
 
   Map<String, Object?> toJson() => {
@@ -48,6 +65,9 @@ final class MachineRecord {
         if (directoryUrl != null) 'directory_url': directoryUrl,
         'paired_at': pairedAt,
         'needs_pairing': needsPairing,
+        if (tlsCa != null) 'tls_ca': tlsCa,
+        if (relayHost != null) 'relay_host': relayHost,
+        if (relaySecret != null) 'relay_secret': relaySecret,
       };
 
   factory MachineRecord.fromJson(Map<String, Object?> json) => MachineRecord(
@@ -56,6 +76,9 @@ final class MachineRecord {
         directoryUrl: json['directory_url'] as String?,
         pairedAt: json['paired_at'] as String? ?? '',
         needsPairing: json['needs_pairing'] as bool? ?? false,
+        tlsCa: json['tls_ca'] as String?,
+        relayHost: json['relay_host'] as String?,
+        relaySecret: json['relay_secret'] as String?,
       );
 }
 

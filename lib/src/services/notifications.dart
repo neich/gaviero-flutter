@@ -15,6 +15,10 @@ final class NotificationContext {
   String? workspaceId;
   String? workspaceName;
   String Function(String convId)? conversationTitle;
+
+  /// The current machine is paired through gaviero-relay, whose foreground
+  /// service already alerts for finished/waiting turns — don't double up.
+  bool relayCovered = false;
 }
 
 final class NotificationService {
@@ -107,7 +111,7 @@ final class NotificationService {
   }
 
   Future<void> _show(int id, String title, String body, String payload) async {
-    if (!_initialized || appIsForeground) return;
+    if (!_initialized || appIsForeground || context.relayCovered) return;
     await _plugin.show(
       id: id,
       title: title,
