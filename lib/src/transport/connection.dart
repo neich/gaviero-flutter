@@ -4,6 +4,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show HandshakeException;
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -70,7 +71,9 @@ final class CommandDropped extends CommandOutcome {
 }
 
 final class RemoteConnection extends ChangeNotifier {
-  final WsConnector _connector;
+  /// Injected by tests; null ⇒ the real `IoWsSocket`, which also honours the
+  /// machine's pinned CA.
+  final WsConnector? _connector;
   final Random _random;
 
   /// Delivered every decoded server envelope after connection bookkeeping.
@@ -87,6 +90,8 @@ final class RemoteConnection extends ChangeNotifier {
   String? _statusDetail;
   Uri? _url;
   String? _token;
+  String? _tlsCa;
+  String? _relayHost;
   WsSocket? _socket;
   StreamSubscription<dynamic>? _subscription;
   Timer? _reconnectTimer;
@@ -115,9 +120,8 @@ final class RemoteConnection extends ChangeNotifier {
       .padLeft(8, '0');
   final Map<String, Completer<CommandOutcome>> _pending = {};
 
-  RemoteConnection({WsConnector? connector, Random? random})
-    : _connector = connector ?? IoWsSocket.connect,
-      _random = random ?? Random();
+  RemoteConnection({this._connector, Random? random})
+    : _random = random ?? Random();
 
   ConnectionPhase get phase => _phase;
 
@@ -135,9 +139,18 @@ final class RemoteConnection extends ChangeNotifier {
     return Duration(milliseconds: base + random.nextInt(500));
   }
 
-  Future<void> start(Uri url, String token) async {
+  /// [tlsCa]: the machine's pinned CA (base64 DER) when it sits behind a
+  /// VPS relay; null keeps system trust.
+  Future<void> start(
+    Uri url,
+    String token, {
+    String? tlsCa,
+    String? relayHost,
+  }) async {
     _url = url;
     _token = token;
+    _tlsCa = tlsCa;
+    _relayHost = relayHost;
     _stopped = false;
     _attempts = 0;
     _reconnectTimer?.cancel();
@@ -195,7 +208,22 @@ final class RemoteConnection extends ChangeNotifier {
     _setPhase(ConnectionPhase.connecting);
     final WsSocket socket;
     try {
-      socket = await _connector(url, token);
+      final connector = _connector;
+      socket = connector != null
+          ? await connector(url, token)
+          : await IoWsSocket.connect(
+              url,
+              token,
+              tlsCa: _tlsCa,
+              relayHost: _relayHost,
+            );
+    } on HandshakeException {
+      // Reachable, but the certificate is not the one this pairing trusts
+      // (wrong machine behind the relay, or its CA was regenerated).
+      _statusDetail = 'Certificate not trusted — pair this machine again';
+      _setPhase(ConnectionPhase.offline);
+      _scheduleReconnect();
+      return;
     } catch (e) {
       _statusDetail = 'Instance offline';
       _setPhase(ConnectionPhase.offline);

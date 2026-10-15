@@ -7,6 +7,8 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'pinned_tls.dart';
+
 final class PairingConfig {
   /// `wss://host.tailnet.ts.net:PORT/v1/ws`
   final String url;
@@ -27,6 +29,19 @@ final class PairingConfig {
   /// 1.1, optional: `https://<host>:<directoryPort>/v1/instances`.
   final String? directoryUrl;
 
+  /// Optional: the machine's private CA (base64 DER) when it is reached
+  /// through a VPS relay (`remote.tlsMode = "pinnedCa"`). Only this CA is
+  /// trusted for the machine.
+  final String? tlsCa;
+
+  /// gaviero-relay: every connection to this machine is dialled to
+  /// `relayHost` (port 443 unless `host:port`) and names the instance by
+  /// SNI. The URL host is the route and is never looked up in DNS.
+  final String? relayHost;
+
+  /// gaviero-relay: bearer secret for the relay's notification stream.
+  final String? relaySecret;
+
   const PairingConfig({
     required this.url,
     required this.token,
@@ -34,6 +49,9 @@ final class PairingConfig {
     this.workspaceId,
     this.machine,
     this.directoryUrl,
+    this.tlsCa,
+    this.relayHost,
+    this.relaySecret,
   });
 
   /// The machine this pairing belongs to: the QR's `machine` when present,
@@ -52,8 +70,9 @@ final class PairingError implements Exception {
 
 /// Parses and validates the QR payload (PLAN.md B9, PLAN-D.md §0.1 item 5):
 /// `{ kind, url, token, workspace, protocol_major }` plus the optional 1.1
-/// keys `workspace_id`, `machine`, `directory_url`. A malformed optional key
-/// is ignored rather than rejected — a 1.0 app never saw them either.
+/// keys `workspace_id`, `machine`, `directory_url`, and `tls_ca` (VPS
+/// relay). A malformed optional key is ignored rather than rejected — a 1.0
+/// app never saw them either — except `tls_ca`, see below.
 PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
   final Object? decoded;
   try {
@@ -85,6 +104,26 @@ PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
   }
 
   final directoryUrl = optional('directory_url');
+  // Unlike the other optional keys, a malformed `tls_ca` is rejected: the
+  // machine can only be reached with that CA, so silently dropping it would
+  // fall back to system trust and fail later with a vaguer error.
+  final rawTlsCa = optional('tls_ca');
+  final tlsCa = rawTlsCa == null ? null : normalizeTlsCa(rawTlsCa);
+  if (rawTlsCa != null && tlsCa == null) {
+    throw const PairingError(
+        'The pairing code carries an invalid certificate. Run /remote again.');
+  }
+  // A relay pairing is all-or-nothing: without the CA the end-to-end TLS
+  // through the relay can't be verified, and without the secret the
+  // notification stream can't be opened.
+  final relayHost = optional('relay_host');
+  final relaySecret = optional('relay_secret');
+  if (relayHost != null) {
+    if (!isValidRelayHost(relayHost) || relaySecret == null || tlsCa == null) {
+      throw const PairingError(
+          'The relay pairing code is incomplete. Run /remote again.');
+    }
+  }
   return PairingConfig(
     url: url,
     token: token,
@@ -95,6 +134,9 @@ PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
         directoryUrl != null && directoryUrl.startsWith('https://')
             ? directoryUrl
             : null,
+    tlsCa: tlsCa,
+    relayHost: relayHost,
+    relaySecret: relayHost == null ? null : relaySecret,
   );
 }
 

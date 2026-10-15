@@ -8,6 +8,7 @@ import 'dart:io';
 import '../protocol/directory.dart';
 import '../protocol/version.dart';
 import 'instance_store.dart';
+import 'pinned_tls.dart';
 
 typedef DirectoryFetcher =
     Future<DirectoryFetchResult> Function(Uri url, String bearerToken);
@@ -18,13 +19,16 @@ final class DirectoryFetchResult {
   const DirectoryFetchResult(this.status, this.body);
 }
 
-/// `dart:io` `HttpClient` with default certificate validation — Tailscale
-/// certs chain to Let's Encrypt, so no pinning.
+/// `dart:io` `HttpClient`: default certificate validation (Tailscale certs
+/// chain to Let's Encrypt), or — for a machine behind a VPS relay — trust
+/// limited to the CA its pairing QR carried ([tlsCa]).
 Future<DirectoryFetchResult> dartIoDirectoryFetch(
   Uri url,
-  String bearerToken,
-) async {
-  final client = HttpClient();
+  String bearerToken, {
+  String? tlsCa,
+  String? relayHost,
+}) async {
+  final client = httpClientFor(tlsCa, relayHost: relayHost);
   client.connectionTimeout = const Duration(seconds: 3);
   try {
     final req = await client.getUrl(url).timeout(const Duration(seconds: 3));
@@ -53,9 +57,22 @@ final class _MachineProbe {
 }
 
 final class DirectoryClient {
-  final DirectoryFetcher fetch;
-  DirectoryClient({DirectoryFetcher? fetch})
-    : fetch = fetch ?? dartIoDirectoryFetch;
+  /// Injected by tests; null ⇒ [dartIoDirectoryFetch] with the machine's
+  /// pinned CA.
+  final DirectoryFetcher? _fetch;
+  DirectoryClient({this._fetch});
+
+  Future<DirectoryFetchResult> _fetchFor(MachineRecord machine, Uri url) {
+    final fetch = _fetch;
+    return fetch != null
+        ? fetch(url, machine.token)
+        : dartIoDirectoryFetch(
+            url,
+            machine.token,
+            tlsCa: machine.tlsCa,
+            relayHost: machine.relayHost,
+          );
+  }
 
   Future<void> refresh(InstanceStore store) async {
     final machines = [...store.doc.machines];
@@ -127,9 +144,9 @@ final class DirectoryClient {
       if (unauthorized) return;
       DirectoryFetchResult result;
       try {
-        result = await fetch(
+        result = await _fetchFor(
+          machine,
           url,
-          machine.token,
         ).timeout(const Duration(seconds: 3));
       } on Object {
         return;
@@ -192,6 +209,8 @@ final class DirectoryClient {
         return _MachineProbe(host: machine.host, unauthorized: true);
       }
       if (seenOnline.contains(inst.key)) continue;
+      // Relay routes never move port (the URL has none): no window to scan.
+      if (machine.relayHost != null) continue;
       for (var delta = 1; delta < instancePortWindow; delta++) {
         final port = origin.port + delta;
         if (port > 65535 || port == directoryPort) continue;

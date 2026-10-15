@@ -9,6 +9,7 @@ library;
 import 'package:web_socket_channel/io.dart';
 
 import '../protocol/version.dart';
+import '../services/pinned_tls.dart';
 
 abstract interface class WsSocket {
   Stream<dynamic> get frames;
@@ -25,12 +26,21 @@ final class IoWsSocket implements WsSocket {
 
   IoWsSocket._(this._channel);
 
-  static Future<WsSocket> connect(Uri url, String bearerToken) async {
+  /// [tlsCa] (base64 DER) pins the machine's private CA — the VPS-relay
+  /// pairing; null keeps system trust.
+  static Future<WsSocket> connect(
+    Uri url,
+    String bearerToken, {
+    String? tlsCa,
+    String? relayHost,
+  }) async {
     final channel = IOWebSocketChannel.connect(
       url,
       protocols: const [wsSubprotocol],
       headers: {'Authorization': 'Bearer $bearerToken'},
       connectTimeout: const Duration(seconds: 15),
+      customClient:
+          tlsCa == null ? null : httpClientFor(tlsCa, relayHost: relayHost),
     );
     await channel.ready;
     return IoWsSocket._(channel);
