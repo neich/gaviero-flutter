@@ -123,7 +123,7 @@ void main() {
     expect(frame['type'], 'client_hello');
     expect(frame.containsKey('instance_id'), isTrue);
     expect(frame['instance_id'], isNull);
-    expect(frame['version'], {'major': 1, 'minor': 2});
+    expect(frame['version'], {'major': 1, 'minor': 3});
     expect(h.connection.phase, ConnectionPhase.handshaking);
   });
 

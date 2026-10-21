@@ -1384,6 +1384,13 @@ and codec suites: 82 passed; `flutter analyze`: no issues. `file_view_screen.dar
 `classifyRuns` and `MarkdownText`. Viewer reuses `classifyRuns`/`highlightStyle`/`MarkdownText`.
 2026-10-21T20:15  M5  checkpoint tag `explorer-m5` (feat(ui): read-only file viewer with
 highlighting and markdown preview).
+2026-10-21T20:25  M6  steps 6.1-6.2 done. README now says protocol 1.3 and carries `## Explorer`;
+`clientAppVersion = '0.3.0'`; pubspec `0.3.0+2`; `flutter pub get` ok. `flutter test`: 198 passed;
+`flutter analyze`: no issues; `flutter build apk --debug` wrote
+`build/app/outputs/flutter-apk/app-debug.apk`. Deviation: `test/connection_test.dart` pinned the
+client-hello envelope at minor 2 and is not in the plan's file list; updated to minor 3.
+2026-10-21T20:25  M6  checkpoint tag `explorer-final` (docs: explorer panel and read-only viewer).
+
 
 
 ```

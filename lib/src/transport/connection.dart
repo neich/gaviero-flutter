@@ -13,7 +13,7 @@ import '../protocol/protocol.dart';
 import 'socket.dart';
 
 const clientName = 'gaviero-remote-android';
-const clientAppVersion = '0.2.0';
+const clientAppVersion = '0.3.0';
 
 enum ConnectionPhase {
   /// Paired but not started, or stopped after a client-bug close.

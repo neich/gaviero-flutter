@@ -7,7 +7,7 @@ conversation tab independently of the desktop's active tab.
 Requires a gaviero TUI with remote enabled (default), reachable either on the
 same Tailscale tailnet or through **gaviero-relay** (one subdomain on 443, no
 Tailscale, no ntfy — see `docs/remote-relay.md` in the gaviero repo and the
-sibling `gaviero-relay` project). Wire protocol **1.2** (`gaviero.v1`); a 1.0
+sibling `gaviero-relay` project). Wire protocol **1.3** (`gaviero.v1`); a 1.0
 desktop still pairs and chats — it just has no instance directory and
 newest-page requests use the `before_seq: 9007199254740991` fallback.
 
@@ -94,6 +94,19 @@ Typing `@` in the composer lists matching workspace files from the desktop
 desktop reads that file into the prompt on send. Needs a gaviero build that
 advertises the `file_completions` capability — older desktops simply show no
 suggestions.
+
+## Explorer
+
+The folder icon in the app bar opens a read-only view of the desktop
+workspace. Root folders match the desktop explorer and `@` completion; tap a
+folder to expand it (directories first, `.git` hidden) and tap a file to open
+it. Rust, TypeScript, and every other grammar-backed language are highlighted
+from the desktop's tree-sitter captures; Markdown opens in **Preview** with a
+**Raw** toggle. Files over 48 KiB show the first 48 KiB without highlighting,
+and binary files are not shown. Nothing here writes — there is no save,
+rename, or delete action. Needs a gaviero build that advertises the
+`file_browser` capability; older desktops show an update hint and receive no
+requests.
 
 ## Turn review
 
