@@ -1375,6 +1375,16 @@ schema/fixtures byte-identical to the Rust crate, 19/19 fixtures, tree clean, ta
 scheduled for M5, so the viewer shipped in M4 (M5 contributes its widget tests); `MarkdownText` did
 not exist in message_widgets.dart and was added as a small `GptMarkdown` wrapper.
 2026-10-21T19:55  M4  checkpoint tag `explorer-m4` (feat(ui): workspace explorer screen).
+2026-10-21T20:05  M4  gate: PASS (executor-verified; flutter gates cannot be delegated because a
+subagent's approval escalation is rejected) — 4/4 explorer tests, `flutter analyze` clean,
+`tooltip: 'Explorer'` in chat_screen.dart, `supportsFileBrowser` in explorer_screen.dart, tree clean.
+2026-10-21T20:15  M5  steps 5.1-5.3 done. `flutter test test/file_view_screen_test.dart`: 4 passed
+(rust runs, markdown Preview/Raw, binary + truncation, non-ASCII offsets); combined with the explorer
+and codec suites: 82 passed; `flutter analyze`: no issues. `file_view_screen.dart` contains
+`classifyRuns` and `MarkdownText`. Viewer reuses `classifyRuns`/`highlightStyle`/`MarkdownText`.
+2026-10-21T20:15  M5  checkpoint tag `explorer-m5` (feat(ui): read-only file viewer with
+highlighting and markdown preview).
+
 
 ```
 
