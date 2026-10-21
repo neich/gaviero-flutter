@@ -29,7 +29,7 @@ final class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-const protocolVersion = ProtocolVersion(1, 2);
+const protocolVersion = ProtocolVersion(1, 3);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 
@@ -59,6 +59,9 @@ abstract final class Capability {
   /// 1.2: `turn_review_*` frames, `snapshot.open_turn_reviews`, and the
   /// `turn_review_action` command.
   static const turnReview = 'turn_review';
+
+  /// 1.3: `list_directory` / `read_file` browse the workspace read-only.
+  static const fileBrowser = 'file_browser';
 }
 
 /// `before_seq` to send to a server without [Capability.latestPage]: 2^53 − 1,

@@ -430,6 +430,23 @@ final class RemoteController extends ChangeNotifier {
     return connection.send(RequestFileCompletions(query: query));
   }
 
+  /// The server advertises [Capability.fileBrowser]: the explorer may send
+  /// `list_directory` / `read_file`.
+  bool get supportsFileBrowser =>
+      connection.hello?.hasCapability(Capability.fileBrowser) ?? false;
+
+  /// One directory of the workspace; `path == null` lists the roots.
+  Future<CommandOutcome> requestDirectory(String? path) {
+    if (!supportsFileBrowser) return Future.value(const CommandDropped());
+    return connection.send(ListDirectory(path: path));
+  }
+
+  /// One regular file, read-only. Dropped without sending on older servers.
+  Future<CommandOutcome> requestFile(String path) {
+    if (!supportsFileBrowser) return Future.value(const CommandDropped());
+    return connection.send(ReadFile(path: path));
+  }
+
   @override
   void dispose() {
     connection.dispose();
