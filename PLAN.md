@@ -1359,5 +1359,22 @@ over the sidecar).
 `flutter test test/protocol_codec_test.dart`: 74 passed; `flutter analyze`: no issues.
 2026-10-21T19:05  M3  checkpoint tag `explorer-m3` (feat(protocol): 1.3 file_browser codec and
 vendored fixtures).
+2026-10-21T19:20  M1  gate: PASS (fresh evaluator) — cargo test -p gaviero-remote 15 passed/1 ignored;
+schema regen leaves the tree clean; cargo check -p gaviero-tui ok; fixtures/client = 19;
+`## File browser` present; FILE_BROWSER advertised; tag at 8fa013e. Evaluator note: the configured
+out-of-tree CARGO_TARGET_DIR is denied to a subagent's sandbox, so it used a scratch target dir (same
+commands, no source edits).
+2026-10-21T19:25  M2  gate: PASS (fresh evaluator) — 6/6 remote_files tests, dispatch + class_spans
+tests, constants present, resolve() rejects `..`/absolute and compares canonical paths, tree clean,
+tag at 90fad95.
+2026-10-21T19:30  M3  gate: PASS (executor-verified; the assigned evaluator could not escalate the
+sandbox for flutter and was stopped) — protocol_codec_test 74 passed, flutter analyze clean,
+schema/fixtures byte-identical to the Rust crate, 19/19 fixtures, tree clean, tag at ed845ba.
+2026-10-21T19:55  M4  steps 4.1-4.3 done. `flutter test test/explorer_screen_test.dart`: 4 passed;
+`flutter analyze`: no issues. Deviation: M4's explorer navigates to `FileViewScreen`, which the plan
+scheduled for M5, so the viewer shipped in M4 (M5 contributes its widget tests); `MarkdownText` did
+not exist in message_widgets.dart and was added as a small `GptMarkdown` wrapper.
+2026-10-21T19:55  M4  checkpoint tag `explorer-m4` (feat(ui): workspace explorer screen).
+
 ```
 

@@ -9,6 +9,7 @@ import '../state/controller.dart';
 import '../transport/connection.dart';
 import 'composer.dart';
 import 'conversation_drawer.dart';
+import 'explorer_screen.dart';
 import 'feedback.dart';
 import 'message_widgets.dart';
 import 'permission_card.dart';
@@ -57,32 +58,44 @@ class _ChatScreenState extends State<ChatScreen> {
             : null;
         final resolvedReview =
             turnReviews && conv != null && pendingReview == null
-                ? controller.state
-                    .turnReviewResolutionFor(conv.summary.convId)
-                : null;
+            ? controller.state.turnReviewResolutionFor(conv.summary.convId)
+            : null;
         return Scaffold(
           drawer: ConversationDrawer(controller: controller),
           appBar: AppBar(
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(conv?.summary.title ?? 'Gaviero Remote',
-                    style: const TextStyle(fontSize: 17)),
+                Text(
+                  conv?.summary.title ?? 'Gaviero Remote',
+                  style: const TextStyle(fontSize: 17),
+                ),
                 if (conv?.summary.model != null)
-                  Text(conv!.summary.model!,
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: Colors.white54)),
+                  Text(
+                    conv!.summary.model!,
+                    style: Theme.of(context).textTheme.labelSmall
+                        ?.copyWith(color: Colors.white54),
+                  ),
               ],
             ),
             actions: [
               IconButton(
+                tooltip: 'Explorer',
+                icon: const Icon(Icons.folder_open),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ExplorerScreen(controller: controller),
+                  ),
+                ),
+              ),
+              IconButton(
                 tooltip: 'Shell sessions',
                 icon: const Icon(Icons.terminal),
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => ShellScreen(controller: controller),
-                )),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ShellScreen(controller: controller),
+                  ),
+                ),
               ),
               IconButton(
                 tooltip: 'Instances',
@@ -110,11 +123,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     count: controller.state.orphanTurnReviews.length,
                     child: const Icon(Icons.fact_check_outlined),
                   ),
-                  onPressed: () =>
-                      Navigator.of(context).push(MaterialPageRoute(
-                    builder: (context) =>
-                        OrphanTurnReviewsScreen(controller: controller),
-                  )),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          OrphanTurnReviewsScreen(controller: controller),
+                    ),
+                  ),
                 ),
               if (controller.state.openProposals.isNotEmpty)
                 IconButton(
@@ -123,18 +137,20 @@ class _ChatScreenState extends State<ChatScreen> {
                     count: controller.state.openProposals.length,
                     child: const Icon(Icons.rule),
                   ),
-                  onPressed: () =>
-                      Navigator.of(context).push(MaterialPageRoute(
-                    builder: (context) =>
-                        ReviewListScreen(controller: controller),
-                  )),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          ReviewListScreen(controller: controller),
+                    ),
+                  ),
                 ),
               PopupMenuButton<String>(
                 onSelected: (choice) async {
                   switch (choice) {
                     case 'follow':
-                      controller.state
-                          .setFollowDesktop(!controller.state.followDesktop);
+                      controller.state.setFollowDesktop(
+                        !controller.state.followDesktop,
+                      );
                     case 'instances':
                       await controller.disconnect();
                   }
@@ -169,8 +185,9 @@ class _ChatScreenState extends State<ChatScreen> {
               if (resolvedReview != null)
                 TurnReviewResolvedBanner(
                   resolved: resolvedReview,
-                  onDismiss: () => controller.state
-                      .dismissTurnReviewResolution(conv!.summary.convId),
+                  onDismiss: () => controller.state.dismissTurnReviewResolution(
+                    conv!.summary.convId,
+                  ),
                 ),
               if (pendingReview != null)
                 TurnReviewCard(controller: controller, review: pendingReview),
@@ -202,7 +219,8 @@ class _MessageList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final showStreaming = conv.streamingTurnId != null &&
+    final showStreaming =
+        conv.streamingTurnId != null &&
         (conv.streamingText.isNotEmpty ||
             conv.streamingStatus != null ||
             conv.liveToolCalls.isNotEmpty);
@@ -229,10 +247,12 @@ class _MessageList extends StatelessWidget {
           return const Padding(
             padding: EdgeInsets.all(16),
             child: Center(
-                child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           );
         }
         return MessageBubble(message: messages[messageIndex]);
@@ -267,8 +287,7 @@ class _ConversationTabs extends StatelessWidget {
                   label: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(conv.summary.title,
-                          overflow: TextOverflow.ellipsis),
+                      Text(conv.summary.title, overflow: TextOverflow.ellipsis),
                       if (conv.summary.isStreaming) ...[
                         const SizedBox(width: 6),
                         const SizedBox(
@@ -277,14 +296,16 @@ class _ConversationTabs extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 1.5),
                         ),
                       ],
-                      if (controller.state.openPermissions
-                          .any((p) => p.convId == conv.summary.convId)) ...[
+                      if (controller.state.openPermissions.any(
+                        (p) => p.convId == conv.summary.convId,
+                      )) ...[
                         const SizedBox(width: 4),
                         const Icon(Icons.gavel, size: 14),
                       ],
                       if (controller.supportsTurnReview &&
-                          controller.state
-                              .hasPendingTurnReview(conv.summary.convId)) ...[
+                          controller.state.hasPendingTurnReview(
+                            conv.summary.convId,
+                          )) ...[
                         const SizedBox(width: 4),
                         const Icon(Icons.fact_check_outlined, size: 14),
                       ],
@@ -294,8 +315,7 @@ class _ConversationTabs extends StatelessWidget {
                       ],
                     ],
                   ),
-                  onSelected: (_) =>
-                      controller.state.view(conv.summary.convId),
+                  onSelected: (_) => controller.state.view(conv.summary.convId),
                 ),
               ),
             ),
@@ -326,9 +346,7 @@ class StatusStrip extends StatelessWidget {
     if (pressure == null && usage == null && cost == null) {
       return const SizedBox.shrink();
     }
-    final labelStyle = Theme.of(context)
-        .textTheme
-        .labelSmall
+    final labelStyle = Theme.of(context).textTheme.labelSmall
         ?.copyWith(color: Colors.white54);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
@@ -351,23 +369,25 @@ class StatusStrip extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Text('${(pressure.ratio * 100).round()}%',
-                      style: labelStyle),
+                  Text('${(pressure.ratio * 100).round()}%', style: labelStyle),
                 ],
               ),
             ),
             const SizedBox(width: 12),
           ],
           if (usage != null) ...[
-            Text('▲${_compact(usage.inputTokens)} ▼${_compact(usage.outputTokens)}',
-                style: labelStyle),
+            Text(
+              '▲${_compact(usage.inputTokens)} ▼${_compact(usage.outputTokens)}',
+              style: labelStyle,
+            ),
             const SizedBox(width: 12),
           ],
           if (cost != null)
             Text(
-                '\$${cost.toStringAsFixed(3)}'
-                ' · Σ\$${conv.sessionCostUsd.toStringAsFixed(2)}',
-                style: labelStyle),
+              '\$${cost.toStringAsFixed(3)}'
+              ' · Σ\$${conv.sessionCostUsd.toStringAsFixed(2)}',
+              style: labelStyle,
+            ),
         ],
       ),
     );
@@ -397,33 +417,34 @@ class ConnectionBanner extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final (String? label, Color color) = switch (connection.phase) {
       ConnectionPhase.connected => (null, Colors.transparent),
-      ConnectionPhase.connecting ||
-      ConnectionPhase.handshaking =>
-        ('Connecting…', scheme.surfaceContainerHigh),
+      ConnectionPhase.connecting || ConnectionPhase.handshaking => (
+        'Connecting…',
+        scheme.surfaceContainerHigh,
+      ),
       ConnectionPhase.offline => (
-          [
-            if (instanceName != null) '$instanceName: ',
-            connection.statusDetail ?? 'Instance offline',
-          ].join(),
-          scheme.surfaceContainerHigh
-        ),
+        [
+          if (instanceName != null) '$instanceName: ',
+          connection.statusDetail ?? 'Instance offline',
+        ].join(),
+        scheme.surfaceContainerHigh,
+      ),
       ConnectionPhase.evicted => (
-          'Connected on another device.',
-          scheme.tertiaryContainer
-        ),
+        'Connected on another device.',
+        scheme.tertiaryContainer,
+      ),
       ConnectionPhase.versionMismatch => (
-          "App and desktop versions don't match. "
-              '${connection.statusDetail ?? ''}',
-          scheme.errorContainer
-        ),
+        "App and desktop versions don't match. "
+            '${connection.statusDetail ?? ''}',
+        scheme.errorContainer,
+      ),
       ConnectionPhase.unauthorized => (
-          connection.statusDetail ?? 'Pairing is no longer valid.',
-          scheme.errorContainer
-        ),
+        connection.statusDetail ?? 'Pairing is no longer valid.',
+        scheme.errorContainer,
+      ),
       ConnectionPhase.disconnected => (
-          connection.statusDetail ?? 'Disconnected',
-          scheme.surfaceContainerHigh
-        ),
+        connection.statusDetail ?? 'Disconnected',
+        scheme.surfaceContainerHigh,
+      ),
     };
     if (label == null) return const SizedBox.shrink();
     return Material(
@@ -432,15 +453,12 @@ class ConnectionBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Row(
           children: [
-            Icon(
-              switch (connection.phase) {
-                ConnectionPhase.evicted => Icons.devices_other,
-                ConnectionPhase.unauthorized => Icons.qr_code_scanner,
-                ConnectionPhase.versionMismatch => Icons.sync_problem,
-                _ => Icons.cloud_off,
-              },
-              size: 16,
-            ),
+            Icon(switch (connection.phase) {
+              ConnectionPhase.evicted => Icons.devices_other,
+              ConnectionPhase.unauthorized => Icons.qr_code_scanner,
+              ConnectionPhase.versionMismatch => Icons.sync_problem,
+              _ => Icons.cloud_off,
+            }, size: 16),
             const SizedBox(width: 8),
             Expanded(child: Text(label, maxLines: 2)),
           ],

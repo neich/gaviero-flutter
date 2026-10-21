@@ -60,8 +60,19 @@ List<_Segment> _segment(Message message) {
       ? full.substring(firstNewline + 1, closingFence)
       : full.substring(firstNewline + 1);
   final bodyStartByte =
-      block.startByte + Utf8Text(full.substring(0, firstNewline + 1)).byteLength;
+      block.startByte +
+      Utf8Text(full.substring(0, firstNewline + 1)).byteLength;
   return (body: body, bodyStartByte: bodyStartByte);
+}
+
+/// Read-only Markdown body used by the file viewer's Preview mode.
+class MarkdownText extends StatelessWidget {
+  final String content;
+
+  const MarkdownText(this.content, {super.key});
+
+  @override
+  Widget build(BuildContext context) => GptMarkdown(content);
 }
 
 class CodeBlockView extends StatelessWidget {
@@ -82,11 +93,13 @@ class CodeBlockView extends StatelessWidget {
         text,
         bodyStart,
         bodyEnd,
-        block.spans.map((s) => (
-              startByte: s.startByte,
-              endByte: s.endByte,
-              className: s.className,
-            )),
+        block.spans.map(
+          (s) => (
+            startByte: s.startByte,
+            endByte: s.endByte,
+            className: s.className,
+          ),
+        ),
       );
       spans = [
         for (final run in runs)
@@ -109,18 +122,18 @@ class CodeBlockView extends StatelessWidget {
               child: Row(
                 children: [
                   if (block.language != null)
-                    Text(block.language!,
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(color: Colors.white38)),
+                    Text(
+                      block.language!,
+                      style: Theme.of(context).textTheme.labelSmall
+                          ?.copyWith(color: Colors.white38),
+                    ),
                   const Spacer(),
                   if (block.truncated)
-                    Text('too large to highlight',
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(color: Colors.white38)),
+                    Text(
+                      'too large to highlight',
+                      style: Theme.of(context).textTheme.labelSmall
+                          ?.copyWith(color: Colors.white38),
+                    ),
                 ],
               ),
             ),
@@ -176,8 +189,10 @@ class MessageBubble extends StatelessWidget {
               for (final segment in _segment(message))
                 switch (segment) {
                   _Prose(:final text) => GptMarkdown(text.trim()),
-                  _Code(:final block) =>
-                    CodeBlockView(text: text, block: block),
+                  _Code(:final block) => CodeBlockView(
+                    text: text,
+                    block: block,
+                  ),
                 },
             if (message.truncated) TruncatedNotice(message: message),
           ],
@@ -199,14 +214,17 @@ class ToolCallRow extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.build_outlined,
-              size: 14, color: Theme.of(context).colorScheme.secondary),
+          Icon(
+            Icons.build_outlined,
+            size: 14,
+            color: Theme.of(context).colorScheme.secondary,
+          ),
           const SizedBox(width: 6),
-          Text(toolName,
-              style: Theme.of(context)
-                  .textTheme
-                  .labelMedium
-                  ?.copyWith(color: Theme.of(context).colorScheme.secondary)),
+          Text(
+            toolName,
+            style: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(color: Theme.of(context).colorScheme.secondary),
+          ),
         ],
       ),
     );
@@ -226,7 +244,7 @@ class TruncatedNotice extends StatelessWidget {
     final label = size == null
         ? 'Message truncated — view the rest on the desktop'
         : 'Truncated — ${_formatBytes(size)} total, view the rest on the '
-            'desktop';
+              'desktop';
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Row(
@@ -234,11 +252,11 @@ class TruncatedNotice extends StatelessWidget {
         children: [
           const Icon(Icons.unfold_more, size: 14, color: Colors.white38),
           const SizedBox(width: 6),
-          Text(label,
-              style: Theme.of(context)
-                  .textTheme
-                  .labelSmall
-                  ?.copyWith(color: Colors.white38)),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall
+                ?.copyWith(color: Colors.white38),
+          ),
         ],
       ),
     );
@@ -295,14 +313,16 @@ class StreamingBubble extends StatelessWidget {
                     width: 12,
                     height: 12,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: scheme.secondary),
+                      strokeWidth: 2,
+                      color: scheme.secondary,
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  Text(status ?? 'streaming…',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelMedium
-                          ?.copyWith(color: scheme.secondary)),
+                  Text(
+                    status ?? 'streaming…',
+                    style: Theme.of(context).textTheme.labelMedium
+                        ?.copyWith(color: scheme.secondary),
+                  ),
                 ],
               ),
             ),
