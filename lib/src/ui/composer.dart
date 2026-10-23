@@ -265,7 +265,10 @@ class _ComposerState extends State<Composer> {
 
   @override
   Widget build(BuildContext context) {
-    final streaming = controller.state.active?.summary.isStreaming ?? false;
+    // The Stop/Send swap belongs to the conversation this composer prompts or
+    // interrupts (`viewed`), not to the desktop-active tab: a turn running in
+    // another tab must not turn this one's send button into a Stop button.
+    final streaming = controller.state.viewed?.summary.isStreaming ?? false;
     final connected = controller.connection.isConnected;
     final allowed =
         controller.connection.hello?.allowedSlashCommands ?? const [];
