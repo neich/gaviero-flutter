@@ -7,5 +7,6 @@ export 'client_frames.dart';
 export 'directory.dart';
 export 'dto.dart';
 export 'envelope.dart';
+export 'file_content.dart';
 export 'server_frames.dart';
 export 'version.dart';

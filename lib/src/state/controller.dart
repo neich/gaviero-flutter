@@ -68,6 +68,14 @@ final class RemoteController extends ChangeNotifier {
   Future<bool> initialize() async {
     await instanceStore.load();
     unawaited(relayAlerts.sync(instanceStore.doc));
+    // Doze holds the relay stream until the app is opened unless this
+    // exemption was granted. Pairing asks too; a dismissed dialog is asked
+    // again on the next cold start, and the activity no-ops once granted.
+    if (instanceStore.doc.machines.any(
+      (m) => m.relayHost != null && m.relaySecret != null && !m.needsPairing,
+    )) {
+      unawaited(relayAlerts.requestBatteryExemption());
+    }
     notifyListeners();
     await refreshDirectory();
     final last = instanceStore.doc.lastInstance;
@@ -365,14 +373,21 @@ final class RemoteController extends ChangeNotifier {
     required bool allow,
     List<List<int>>? answers,
     String? message,
+    PermissionGrant? grant,
   }) => connection.send(
     PermissionDecision(
       requestId: requestId,
       allow: allow,
       answers: answers,
       message: message,
+      grant: grant,
     ),
   );
+
+  /// The server advertises [Capability.permissionTurnGrant]: an allow may
+  /// carry `grant: mcp_server_turn` for a request with `mcp_server`.
+  bool get supportsPermissionTurnGrant =>
+      connection.hello?.hasCapability(Capability.permissionTurnGrant) ?? false;
 
   Future<CommandOutcome> reviewAction(
     int proposalId,
@@ -428,6 +443,23 @@ final class RemoteController extends ChangeNotifier {
       return Future.value(const CommandDropped());
     }
     return connection.send(RequestFileCompletions(query: query));
+  }
+
+  /// The server advertises [Capability.fileBrowser]: the explorer may send
+  /// `list_directory` / `read_file`.
+  bool get supportsFileBrowser =>
+      connection.hello?.hasCapability(Capability.fileBrowser) ?? false;
+
+  /// One directory of the workspace; `path == null` lists the roots.
+  Future<CommandOutcome> requestDirectory(String? path) {
+    if (!supportsFileBrowser) return Future.value(const CommandDropped());
+    return connection.send(ListDirectory(path: path));
+  }
+
+  /// One regular file, read-only. Dropped without sending on older servers.
+  Future<CommandOutcome> requestFile(String path) {
+    if (!supportsFileBrowser) return Future.value(const CommandDropped());
+    return connection.send(ReadFile(path: path));
   }
 
   @override

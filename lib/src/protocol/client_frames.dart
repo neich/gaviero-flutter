@@ -1,6 +1,7 @@
-/// Client → server frame payloads (17 types).
+/// Client → server frame payloads (19 types).
 library;
 
+import 'dto.dart' show PermissionGrant;
 import 'version.dart';
 
 void _put(Map<String, Object?> map, String key, Object? value) {
@@ -28,11 +29,19 @@ sealed class ClientPayload {
         'request_snapshot' => const RequestSnapshot(),
         'request_messages' => RequestMessages.fromJson(json),
         'request_proposal' => RequestProposal.fromJson(json),
-        'request_terminals' => RequestTerminals(terminalId: json['terminal_id'] as int?),
+        'request_terminals' => RequestTerminals(
+          terminalId: json['terminal_id'] as int?,
+        ),
         'terminal_input' => TerminalInput(
-            terminalId: json['terminal_id'] as int, text: json['text'] as String),
+          terminalId: json['terminal_id'] as int,
+          text: json['text'] as String,
+        ),
         'request_file_completions' => RequestFileCompletions(
-            query: json['query'] as String, limit: json['limit'] as int?),
+          query: json['query'] as String,
+          limit: json['limit'] as int?,
+        ),
+        'list_directory' => ListDirectory(path: json['path'] as String?),
+        'read_file' => ReadFile(path: json['path'] as String),
         'turn_review_action' => TurnReviewAction.fromJson(json),
         _ => throw FormatException('unknown client frame type: $type'),
       };
@@ -60,7 +69,10 @@ final class TerminalInput extends ClientPayload {
   String get frameType => 'terminal_input';
 
   @override
-  Map<String, Object?> toPayloadJson() => {'terminal_id': terminalId, 'text': text};
+  Map<String, Object?> toPayloadJson() => {
+    'terminal_id': terminalId,
+    'text': text,
+  };
 }
 
 /// Requires [Capability.fileCompletions]. The completed result is
@@ -85,6 +97,38 @@ final class RequestFileCompletions extends ClientPayload {
   }
 }
 
+/// Requires [Capability.fileBrowser]. Result: a `DirectoryListing`.
+final class ListDirectory extends ClientPayload {
+  /// Explorer display path (`<root-label>/<rel>`); null lists the roots.
+  final String? path;
+
+  const ListDirectory({this.path});
+
+  @override
+  String get frameType => 'list_directory';
+
+  @override
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{};
+    _put(map, 'path', path);
+    return map;
+  }
+}
+
+/// Requires [Capability.fileBrowser]. Result: a `FileContent`.
+final class ReadFile extends ClientPayload {
+  /// Explorer display path of a regular file.
+  final String path;
+
+  const ReadFile({required this.path});
+
+  @override
+  String get frameType => 'read_file';
+
+  @override
+  Map<String, Object?> toPayloadJson() => {'path': path};
+}
+
 final class ClientHello extends ClientPayload {
   final ProtocolVersion protocolVersion;
   final String clientName;
@@ -97,21 +141,22 @@ final class ClientHello extends ClientPayload {
   });
 
   factory ClientHello.fromJson(Map<String, Object?> json) => ClientHello(
-        protocolVersion: ProtocolVersion.fromJson(
-            json['protocol_version'] as Map<String, Object?>),
-        clientName: json['client_name'] as String,
-        clientVersion: json['client_version'] as String,
-      );
+    protocolVersion: ProtocolVersion.fromJson(
+      json['protocol_version'] as Map<String, Object?>,
+    ),
+    clientName: json['client_name'] as String,
+    clientVersion: json['client_version'] as String,
+  );
 
   @override
   String get frameType => 'client_hello';
 
   @override
   Map<String, Object?> toPayloadJson() => {
-        'protocol_version': protocolVersion.toJson(),
-        'client_name': clientName,
-        'client_version': clientVersion,
-      };
+    'protocol_version': protocolVersion.toJson(),
+    'client_name': clientName,
+    'client_version': clientVersion,
+  };
 }
 
 final class SendPrompt extends ClientPayload {
@@ -121,9 +166,9 @@ final class SendPrompt extends ClientPayload {
   const SendPrompt({required this.convId, required this.text});
 
   factory SendPrompt.fromJson(Map<String, Object?> json) => SendPrompt(
-        convId: json['conv_id'] as String,
-        text: json['text'] as String,
-      );
+    convId: json['conv_id'] as String,
+    text: json['text'] as String,
+  );
 
   @override
   String get frameType => 'send_prompt';
@@ -146,17 +191,20 @@ final class Slash extends ClientPayload {
   });
 
   factory Slash.fromJson(Map<String, Object?> json) => Slash(
-        convId: json['conv_id'] as String,
-        line: json['line'] as String,
-        confirmed: json['confirmed'] as bool,
-      );
+    convId: json['conv_id'] as String,
+    line: json['line'] as String,
+    confirmed: json['confirmed'] as bool,
+  );
 
   @override
   String get frameType => 'slash';
 
   @override
-  Map<String, Object?> toPayloadJson() =>
-      {'conv_id': convId, 'line': line, 'confirmed': confirmed};
+  Map<String, Object?> toPayloadJson() => {
+    'conv_id': convId,
+    'line': line,
+    'confirmed': confirmed,
+  };
 }
 
 final class PermissionDecision extends ClientPayload {
@@ -170,11 +218,16 @@ final class PermissionDecision extends ClientPayload {
   /// Free text on deny.
   final String? message;
 
+  /// 1.4: with [allow], also allow the request's `mcp_server` for the rest
+  /// of the prompt. Requires [Capability.permissionTurnGrant].
+  final PermissionGrant? grant;
+
   const PermissionDecision({
     required this.requestId,
     required this.allow,
     this.answers,
     this.message,
+    this.grant,
   });
 
   factory PermissionDecision.fromJson(Map<String, Object?> json) =>
@@ -185,9 +238,12 @@ final class PermissionDecision extends ClientPayload {
             ? null
             : [
                 for (final q in json['answers'] as List<Object?>)
-                  [for (final i in q as List<Object?>) i as int]
+                  [for (final i in q as List<Object?>) i as int],
               ],
         message: json['message'] as String?,
+        grant: json['grant'] == null
+            ? null
+            : PermissionGrant.fromWire(json['grant'] as String),
       );
 
   @override
@@ -198,6 +254,7 @@ final class PermissionDecision extends ClientPayload {
     final map = <String, Object?>{'request_id': requestId, 'allow': allow};
     _put(map, 'answers', answers);
     _put(map, 'message', message);
+    _put(map, 'grant', grant?.wire);
     return map;
   }
 }
@@ -213,9 +270,9 @@ enum ReviewActionKind {
   const ReviewActionKind(this.wire);
 
   static ReviewActionKind fromWire(String s) => values.firstWhere(
-        (k) => k.wire == s,
-        orElse: () => throw FormatException('unknown review action: $s'),
-      );
+    (k) => k.wire == s,
+    orElse: () => throw FormatException('unknown review action: $s'),
+  );
 }
 
 final class ReviewAction extends ClientPayload {
@@ -234,11 +291,11 @@ final class ReviewAction extends ClientPayload {
   });
 
   factory ReviewAction.fromJson(Map<String, Object?> json) => ReviewAction(
-        proposalId: json['proposal_id'] as int,
-        proposalRevision: json['proposal_revision'] as int,
-        action: ReviewActionKind.fromWire(json['action'] as String),
-        hunkIndex: json['hunk_index'] as int?,
-      );
+    proposalId: json['proposal_id'] as int,
+    proposalRevision: json['proposal_revision'] as int,
+    action: ReviewActionKind.fromWire(json['action'] as String),
+    hunkIndex: json['hunk_index'] as int?,
+  );
 
   @override
   String get frameType => 'review_action';
@@ -269,9 +326,9 @@ enum TurnReviewActionKind {
   bool get needsPath => this == keepFile || this == revertFile;
 
   static TurnReviewActionKind fromWire(String s) => values.firstWhere(
-        (k) => k.wire == s,
-        orElse: () => throw FormatException('unknown turn review action: $s'),
-      );
+    (k) => k.wire == s,
+    orElse: () => throw FormatException('unknown turn review action: $s'),
+  );
 }
 
 /// Requires [Capability.turnReview]. Actions are absolute, never toggles, so
@@ -354,8 +411,11 @@ final class RenameConversation extends ClientPayload {
   String get frameType => 'rename_conversation';
 
   @override
-  Map<String, Object?> toPayloadJson() =>
-      {'conv_id': convId, 'conv_revision': convRevision, 'title': title};
+  Map<String, Object?> toPayloadJson() => {
+    'conv_id': convId,
+    'conv_revision': convRevision,
+    'title': title,
+  };
 }
 
 final class ResetConversation extends ClientPayload {
@@ -374,8 +434,10 @@ final class ResetConversation extends ClientPayload {
   String get frameType => 'reset_conversation';
 
   @override
-  Map<String, Object?> toPayloadJson() =>
-      {'conv_id': convId, 'conv_revision': convRevision};
+  Map<String, Object?> toPayloadJson() => {
+    'conv_id': convId,
+    'conv_revision': convRevision,
+  };
 }
 
 final class Interrupt extends ClientPayload {
@@ -385,9 +447,9 @@ final class Interrupt extends ClientPayload {
   const Interrupt({required this.convId, this.turnId});
 
   factory Interrupt.fromJson(Map<String, Object?> json) => Interrupt(
-        convId: json['conv_id'] as String,
-        turnId: json['turn_id'] as String?,
-      );
+    convId: json['conv_id'] as String,
+    turnId: json['turn_id'] as String?,
+  );
 
   @override
   String get frameType => 'interrupt';

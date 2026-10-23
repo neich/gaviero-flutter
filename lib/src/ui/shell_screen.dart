@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../protocol/client_frames.dart';
 import '../state/controller.dart';
@@ -21,6 +22,13 @@ class _ShellScreenState extends State<ShellScreen>
     with WidgetsBindingObserver {
   final _input = TextEditingController();
   final _drafts = <int, String>{};
+  /// Commands run from this screen, oldest first. Recalling one only touches
+  /// the box, never the PTY's line buffer, so it can be edited before sending.
+  final _history = <String>[];
+  /// Position in [_history] while recalling, or null when on the live line.
+  int? _historyAt;
+  /// The line being typed when recall started, restored past the newest entry.
+  String _liveLine = '';
   Timer? _timer;
   List<Map<String, Object?>> _tabs = [];
   int? _selected;
@@ -36,8 +44,9 @@ class _ShellScreenState extends State<ShellScreen>
   bool get _supported =>
       _connection.hello?.capabilities.contains('shell_sessions') ?? false;
   bool get _connected => _connection.phase == ConnectionPhase.connected;
-  bool get _canInput =>
-      _connected && _supported && _fresh && !_sending && _selected != null;
+  bool get _fieldEnabled =>
+      _connected && _supported && _fresh && _selected != null;
+  bool get _canInput => _fieldEnabled && !_sending;
 
   @override
   void initState() {
@@ -58,6 +67,7 @@ class _ShellScreenState extends State<ShellScreen>
       _fresh = false;
       _drafts.clear();
       _input.clear();
+      _resetRecall();
     }
     setState(() {});
     _refresh();
@@ -90,6 +100,7 @@ class _ShellScreenState extends State<ShellScreen>
           if (_selected != selected) {
             _generation++;
             _input.text = _drafts[selected] ?? '';
+            _resetRecall();
           }
           _tabs = tabs;
           _selected = selected;
@@ -123,6 +134,7 @@ class _ShellScreenState extends State<ShellScreen>
       _generation++;
       _selected = id;
       _input.text = _drafts[id] ?? '';
+      _resetRecall();
       _output = '';
       _fresh = false;
     });
@@ -151,6 +163,9 @@ class _ShellScreenState extends State<ShellScreen>
           _input.clear();
           _drafts.remove(id);
         }
+        if (includeDraft && key == '\r' && draft.trim().isNotEmpty) {
+          _remember(draft);
+        }
         _refresh();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
@@ -168,6 +183,55 @@ class _ShellScreenState extends State<ShellScreen>
       if (mounted) setState(() => _sending = false);
     }
   }
+
+  /// Walks [_history] the way a shell does: ↑ steps back from the live line,
+  /// ↓ steps toward it and restores it, and the caret lands at the end of the
+  /// recalled entry so it can be edited in place.
+  void _recall(int step) {
+    if (_history.isEmpty) return;
+    final at = _historyAt;
+    if (at == null) {
+      if (step > 0) return;
+      _liveLine = _input.text;
+      _historyAt = _history.length - 1;
+    } else {
+      final next = at + step;
+      if (next >= _history.length) {
+        _historyAt = null;
+        _setInput(_liveLine);
+        _liveLine = '';
+        return;
+      }
+      _historyAt = next < 0 ? 0 : next;
+    }
+    _setInput(_history[_historyAt!]);
+  }
+
+  void _setInput(String text) {
+    _input.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  /// Keeps a command that actually ran so it can be recalled and edited.
+  void _remember(String command) {
+    _history.add(command);
+    if (_history.length > 200) _history.removeAt(0);
+    _resetRecall();
+  }
+
+  void _resetRecall() {
+    _historyAt = null;
+    _liveLine = '';
+  }
+
+  Widget _keyButton(String label, String keys, {bool includeDraft = false}) =>
+      TextButton(
+        onPressed: _canInput
+            ? () => _send(keys, includeDraft: includeDraft) : null,
+        child: Text(label),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -217,25 +281,48 @@ class _ShellScreenState extends State<ShellScreen>
             )),
         SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(
           children: [
-            for (final key in <(String, String)>[
-              ('Ctrl+C', '\x03'), ('Esc', '\x1b'), ('Tab', '\t'),
-              ('↑', '\x1b[A'), ('↓', '\x1b[B'),
-              ('←', '\x1b[D'), ('→', '\x1b[C'), ('⌫', '\x7f'),
-            ]) TextButton(
-              onPressed: _canInput ? () => _send(key.$2,
-                  includeDraft: key.$1 == 'Tab') : null,
-              child: Text(key.$1),
+            _keyButton('Ctrl+C', '\x03'),
+            _keyButton('Esc', '\x1b'),
+            _keyButton('Tab', '\t', includeDraft: true),
+            // ↑/↓ put a command back in the box so it can be edited; holding
+            // one still sends the arrow key itself to the shell.
+            TextButton(
+              onPressed: _fieldEnabled ? () => _recall(-1) : null,
+              onLongPress: _canInput
+                  ? () => _send('\x1b[A', includeDraft: false) : null,
+              child: const Text('↑'),
             ),
+            TextButton(
+              onPressed: _fieldEnabled ? () => _recall(1) : null,
+              onLongPress: _canInput
+                  ? () => _send('\x1b[B', includeDraft: false) : null,
+              child: const Text('↓'),
+            ),
+            _keyButton('←', '\x1b[D'),
+            _keyButton('→', '\x1b[C'),
+            _keyButton('⌫', '\x7f'),
           ],
         )),
         Padding(padding: const EdgeInsets.all(8), child: Row(children: [
-          Expanded(child: TextField(
-            controller: _input,
-            enabled: _connected && _supported && _fresh && _selected != null,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(hintText: 'Command or shell input'),
-            onSubmitted: (_) => _send('\r'),
+          Expanded(child: CallbackShortcuts(
+            bindings: <ShortcutActivator, VoidCallback>{
+              const SingleActivator(LogicalKeyboardKey.arrowUp):
+                  () => _recall(-1),
+              const SingleActivator(LogicalKeyboardKey.arrowDown):
+                  () => _recall(1),
+            },
+            child: TextField(
+              controller: _input,
+              enabled: _fieldEnabled,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                hintText: 'Command or shell input',
+                helperText: _fieldEnabled
+                    ? '↑ ↓ history · hold a key to send the arrow' : null,
+              ),
+              onSubmitted: (_) => _send('\r'),
+            ),
           )),
           TextButton(onPressed: _canInput ? () => _send('') : null,
               child: const Text('Type')),

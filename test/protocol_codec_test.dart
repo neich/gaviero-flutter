@@ -48,12 +48,13 @@ List<String> fixtureNames(String side) {
 void main() {
   group('vendored schema constants', () {
     final schema = jsonDecode(
-            File('protocol/protocol.schema.json').readAsStringSync())
-        as Map<String, Object?>;
+      File('protocol/protocol.schema.json').readAsStringSync(),
+    ) as Map<String, Object?>;
 
     test('PROTOCOL_VERSION matches the schema', () {
       final wire = ProtocolVersion.fromJson(
-          schema['protocol_version'] as Map<String, Object?>);
+        schema['protocol_version'] as Map<String, Object?>,
+      );
       expect(protocolVersion, wire);
     });
 
@@ -76,8 +77,10 @@ void main() {
       expect(hello.supportsLatestPage, isTrue);
       expect(hello.supportsInstances, isTrue);
       expect(hello.machine?.host, 'host.tailnet.ts.net');
-      expect(hello.machine?.directoryUrl,
-          'https://host.tailnet.ts.net:49151/v1/instances');
+      expect(
+        hello.machine?.directoryUrl,
+        'https://host.tailnet.ts.net:49151/v1/instances',
+      );
     });
 
     test('a 1.0 hello without machine decodes and re-encodes without it', () {
@@ -92,16 +95,20 @@ void main() {
       expect(hello.machine, isNull);
       expect(hello.supportsLatestPage, isFalse);
       expect(hello.supportsInstances, isFalse);
-      expect(envelope.version.isCompatibleWith(protocolVersion), isTrue,
-          reason: 'a 1.0 desktop is still compatible: same major');
+      expect(
+        envelope.version.isCompatibleWith(protocolVersion),
+        isTrue,
+        reason: 'a 1.0 desktop is still compatible: same major',
+      );
       expect(deepEquals(envelope.toJson(), json), isTrue);
       expect(hello.toPayloadJson().containsKey('machine'), isFalse);
     });
 
     test('a machine without directory_url round-trips without the key', () {
       final json = readFixture('server', 'hello');
-      final machine = (json['payload'] as Map<String, Object?>)['machine']
-          as Map<String, Object?>;
+      final machine =
+          (json['payload'] as Map<String, Object?>)['machine']
+              as Map<String, Object?>;
       machine.remove('directory_url');
       final envelope = ServerEnvelope.fromJson(json);
       expect((envelope.payload as Hello).machine!.directoryUrl, isNull);
@@ -117,22 +124,23 @@ void main() {
       expect(decoded.beforeSeq, isNull);
       // The 1.0 fallback is a plain integer that survives JSON as an int.
       const legacy = RequestMessages(
-          convId: 'conv-3', beforeSeq: legacyNewestPageBeforeSeq, limit: 50);
-      final wire = jsonDecode(jsonEncode(legacy.toPayloadJson()))
-          as Map<String, Object?>;
+        convId: 'conv-3',
+        beforeSeq: legacyNewestPageBeforeSeq,
+        limit: 50,
+      );
+      final wire = jsonDecode(
+        jsonEncode(legacy.toPayloadJson()),
+      ) as Map<String, Object?>;
       expect(wire['before_seq'], 9007199254740991);
     });
 
-    test('the vendored request_messages fixture still carries before_seq',
-        () {
+    test('the vendored request_messages fixture still carries before_seq', () {
       final json = readFixture('client', 'request_messages');
-      final payload =
-          ClientEnvelope.fromJson(json).payload as RequestMessages;
+      final payload = ClientEnvelope.fromJson(json).payload as RequestMessages;
       expect(payload.beforeSeq, 57);
     });
 
-    test('instances.json decodes, round-trips, and keeps client_connected',
-        () {
+    test('instances.json decodes, round-trips, and keeps client_connected', () {
       final json = readFixture('http', 'instances');
       final directory = InstanceDirectory.fromJson(json);
       expect(directory.protocolVersion, const ProtocolVersion(1, 1));
@@ -141,8 +149,11 @@ void main() {
       expect(directory.instances.map((i) => i.clientConnected), [false, true]);
       expect(directory.instances[1].workspace.displayName, 'gaviero-flutter');
       expect(directory.instances[1].port, 61440);
-      expect(deepEquals(directory.toJson(), json), isTrue,
-          reason: 're-encoded instances.json differs from the fixture');
+      expect(
+        deepEquals(directory.toJson(), json),
+        isTrue,
+        reason: 're-encoded instances.json differs from the fixture',
+      );
     });
   });
 
@@ -152,21 +163,59 @@ void main() {
         final json = readFixture('client', name);
         final envelope = ClientEnvelope.fromJson(json);
         expect(envelope.payload.frameType, json['type']);
-        expect(deepEquals(envelope.toJson(), json), isTrue,
-            reason: 're-encoded $name differs from the fixture');
+        expect(
+          deepEquals(envelope.toJson(), json),
+          isTrue,
+          reason: 're-encoded $name differs from the fixture',
+        );
       });
     }
 
-    test('there is a fixture for all 17 client frame types', () {
-      expect(fixtureNames('client'), hasLength(17));
+    test('there is a fixture for all 19 client frame types', () {
+      expect(fixtureNames('client'), hasLength(19));
+    });
+
+    test('list_directory without a path omits the key', () {
+      const request = ListDirectory();
+      expect(request.toPayloadJson(), <String, Object?>{});
+    });
+
+    test('the 1.3 file fixtures decode and round-trip', () {
+      final list = readFixture('client', 'list_directory');
+      final read = readFixture('client', 'read_file');
+      expect(
+        (ClientEnvelope.fromJson(list).payload as ListDirectory).path,
+        'src',
+      );
+      expect(
+        (ClientEnvelope.fromJson(read).payload as ReadFile).path,
+        'src/main.rs',
+      );
+    });
+
+    test('file content decodes the compact span table', () {
+      final content = FileContent.fromJson({
+        'path': 'a.rs',
+        'viewable': true,
+        'language': 'rust',
+        'bytes': 2,
+        'truncated': false,
+        'content': 'fn',
+        'classes': ['keyword'],
+        'spans': [
+          [0, 2, 0],
+        ],
+        'spans_truncated': false,
+      });
+      expect(content.spans.single.className, 'keyword');
+      expect(content.spans.single.endByte, 2);
     });
 
     test('client_hello carries a literal null instance_id', () {
       final json = readFixture('client', 'client_hello');
       expect(json.containsKey('instance_id'), isTrue);
       expect(json['instance_id'], isNull);
-      final encoded =
-          ClientEnvelope.fromJson(json).toJson();
+      final encoded = ClientEnvelope.fromJson(json).toJson();
       expect(encoded.containsKey('instance_id'), isTrue);
       expect(encoded['instance_id'], isNull);
     });
@@ -179,8 +228,11 @@ void main() {
         final envelope = ServerEnvelope.fromJson(json);
         expect(envelope.payload.frameType, json['type']);
         expect(envelope.payload, isNot(isA<UnknownServerPayload>()));
-        expect(deepEquals(envelope.toJson(), json), isTrue,
-            reason: 're-encoded $name differs from the fixture');
+        expect(
+          deepEquals(envelope.toJson(), json),
+          isTrue,
+          reason: 're-encoded $name differs from the fixture',
+        );
       });
     }
 
@@ -191,17 +243,20 @@ void main() {
 
   group('1.2 turn review', () {
     test('turn_review_pending decodes every field', () {
-      final payload = ServerEnvelope.fromJson(
-              readFixture('server', 'turn_review_pending'))
-          .payload as TurnReviewEvent;
+      final payload =
+          ServerEnvelope.fromJson(readFixture('server', 'turn_review_pending'))
+                  .payload
+              as TurnReviewEvent;
       expect(payload.lifecycle, TurnReviewLifecycle.pending);
       final review = payload.review;
       expect(review.turnId, 'conv-3-1759600000000');
       expect(review.convId, 'conv-3');
       expect(review.outcome, TurnOutcome.completed);
       expect(review.warnings, isEmpty);
-      expect(review.files.map((f) => f.path),
-          ['src/parser.rs', 'assets/logo.png']);
+      expect(review.files.map((f) => f.path), [
+        'src/parser.rs',
+        'assets/logo.png',
+      ]);
       final logo = review.files[1];
       expect(logo.change, TurnFileChange.added);
       expect(logo.decision, TurnFileDecision.keep);
@@ -209,19 +264,24 @@ void main() {
       expect(logo.binary, isTrue);
       expect(logo.overlapWith, ['conv-1-1759599990000']);
       expect(review.files[0].overlapWith, isEmpty);
-      expect(review.files[0].toJson().containsKey('overlap_with'), isFalse,
-          reason: 'empty overlap_with is omitted, never emitted');
+      expect(
+        review.files[0].toJson().containsKey('overlap_with'),
+        isFalse,
+        reason: 'empty overlap_with is omitted, never emitted',
+      );
     });
 
-    test('turn_review_updated carries revert_hunks, outcome, and warnings',
-        () {
-      final payload = ServerEnvelope.fromJson(
-              readFixture('server', 'turn_review_updated'))
-          .payload as TurnReviewEvent;
+    test('turn_review_updated carries revert_hunks, outcome, and warnings', () {
+      final payload =
+          ServerEnvelope.fromJson(readFixture('server', 'turn_review_updated'))
+                  .payload
+              as TurnReviewEvent;
       expect(payload.lifecycle, TurnReviewLifecycle.updated);
       expect(payload.review.outcome, TurnOutcome.cancelled);
-      expect(payload.review.files.map((f) => f.decision),
-          [TurnFileDecision.revertHunks, TurnFileDecision.revert]);
+      expect(payload.review.files.map((f) => f.decision), [
+        TurnFileDecision.revertHunks,
+        TurnFileDecision.revert,
+      ]);
       expect(payload.review.files[1].change, TurnFileChange.deleted);
       expect(payload.review.warnings, hasLength(1));
     });
@@ -242,8 +302,11 @@ void main() {
       final bare = TurnReviewResolved.fromJson(payload);
       expect(bare.failed, isEmpty);
       expect(bare.convId, isNull);
-      expect(bare.toPayloadJson(),
-          {'turn_id': 'conv-3-1759600000000', 'kept': 1, 'reverted': 1});
+      expect(bare.toPayloadJson(), {
+        'turn_id': 'conv-3-1759600000000',
+        'kept': 1,
+        'reverted': 1,
+      });
     });
 
     test('a snapshot without open_turn_reviews decodes to none and '
@@ -253,17 +316,18 @@ void main() {
       expect(payload.containsKey('open_turn_reviews'), isFalse);
       final snapshot = ServerEnvelope.fromJson(json).payload as Snapshot;
       expect(snapshot.openTurnReviews, isEmpty);
-      expect(snapshot.toPayloadJson().containsKey('open_turn_reviews'),
-          isFalse);
+      expect(
+        snapshot.toPayloadJson().containsKey('open_turn_reviews'),
+        isFalse,
+      );
     });
 
     test('snapshot.open_turn_reviews decodes and round-trips', () {
       final json = readFixture('server', 'snapshot');
-      final review = (readFixture('server', 'turn_review_updated')['payload']
-          as Map<String, Object?>)['review'];
-      (json['payload'] as Map<String, Object?>)['open_turn_reviews'] = [
-        review
-      ];
+      final review =
+          (readFixture('server', 'turn_review_updated')['payload']
+              as Map<String, Object?>)['review'];
+      (json['payload'] as Map<String, Object?>)['open_turn_reviews'] = [review];
       final envelope = ServerEnvelope.fromJson(json);
       final snapshot = envelope.payload as Snapshot;
       expect(snapshot.openTurnReviews.single.turnId, 'conv-3-1759600000000');
@@ -273,17 +337,18 @@ void main() {
     test('values from a newer server decode to unknown instead of dropping '
         'the snapshot, and re-encode verbatim', () {
       final json = readFixture('server', 'snapshot');
-      final review = jsonDecode(jsonEncode(
+      final review = jsonDecode(
+        jsonEncode(
           (readFixture('server', 'turn_review_updated')['payload']
-              as Map<String, Object?>)['review'])) as Map<String, Object?>;
+              as Map<String, Object?>)['review'],
+        ),
+      ) as Map<String, Object?>;
       review['outcome'] = 'timed_out';
-      final file = (review['files'] as List<Object?>).first
-          as Map<String, Object?>;
+      final file =
+          (review['files'] as List<Object?>).first as Map<String, Object?>;
       file['change'] = 'renamed';
       file['decision'] = 'revert_lines';
-      (json['payload'] as Map<String, Object?>)['open_turn_reviews'] = [
-        review
-      ];
+      (json['payload'] as Map<String, Object?>)['open_turn_reviews'] = [review];
 
       final envelope = ServerEnvelope.fromJson(json);
       final decoded = (envelope.payload as Snapshot).openTurnReviews.single;
@@ -291,33 +356,42 @@ void main() {
       expect(decoded.files.first.change, TurnFileChange.unknown);
       expect(decoded.files.first.change.badge, '?');
       expect(decoded.files.first.decision, TurnFileDecision.unknown);
-      expect(deepEquals(envelope.toJson(), json), isTrue,
-          reason: 'unknown values must re-encode as the server sent them');
+      expect(
+        deepEquals(envelope.toJson(), json),
+        isTrue,
+        reason: 'unknown values must re-encode as the server sent them',
+      );
     });
 
     test('turn_review_action encodes path only for per-file actions', () {
-      final fixture = ClientEnvelope.fromJson(
-              readFixture('client', 'turn_review_action'))
-          .payload as TurnReviewAction;
+      final fixture =
+          ClientEnvelope.fromJson(readFixture('client', 'turn_review_action'))
+                  .payload
+              as TurnReviewAction;
       expect(fixture.action, TurnReviewActionKind.revertFile);
       expect(fixture.path, 'src/parser.rs');
       expect(TurnReviewActionKind.keepFile.needsPath, isTrue);
       expect(TurnReviewActionKind.finalize.needsPath, isFalse);
 
       const finalize = TurnReviewAction(
-          turnId: 't1', action: TurnReviewActionKind.finalize);
+        turnId: 't1',
+        action: TurnReviewActionKind.finalize,
+      );
       expect(finalize.toPayloadJson(), {'turn_id': 't1', 'action': 'finalize'});
       expect(
-          [for (final k in TurnReviewActionKind.values) k.wire],
-          ['keep_file', 'revert_file', 'keep_all', 'revert_all', 'finalize']);
+        [for (final k in TurnReviewActionKind.values) k.wire],
+        ['keep_file', 'revert_file', 'keep_all', 'revert_all', 'finalize'],
+      );
     });
 
     test('the 1.2 error codes decode to known values', () {
       final json = readFixture('server', 'command_error');
       final payload = json['payload'] as Map<String, Object?>;
       payload['code'] = 'turn_review_pending';
-      expect((ServerEnvelope.fromJson(json).payload as CommandError).code,
-          ErrorCode.turnReviewPending);
+      expect(
+        (ServerEnvelope.fromJson(json).payload as CommandError).code,
+        ErrorCode.turnReviewPending,
+      );
       payload['code'] = 'unknown_turn_review';
       final err = ServerEnvelope.fromJson(json).payload as CommandError;
       expect(err.code, ErrorCode.unknownTurnReview);
@@ -335,14 +409,22 @@ void main() {
     test('the turn_review capability is feature-detected', () {
       final json = readFixture('server', 'hello');
       final payload = json['payload'] as Map<String, Object?>;
-      expect((ServerEnvelope.fromJson(json).payload as Hello)
-          .hasCapability(Capability.turnReview), isFalse);
+      expect(
+        (ServerEnvelope.fromJson(json).payload as Hello).hasCapability(
+          Capability.turnReview,
+        ),
+        isFalse,
+      );
       payload['capabilities'] = [
         ...(payload['capabilities'] as List<Object?>),
         'turn_review',
       ];
-      expect((ServerEnvelope.fromJson(json).payload as Hello)
-          .hasCapability(Capability.turnReview), isTrue);
+      expect(
+        (ServerEnvelope.fromJson(json).payload as Hello).hasCapability(
+          Capability.turnReview,
+        ),
+        isTrue,
+      );
     });
   });
 
@@ -354,8 +436,10 @@ void main() {
       final envelope = ServerEnvelope.fromJson(json);
       final payload = envelope.payload;
       expect(payload, isA<UnknownServerPayload>());
-      expect((payload as UnknownServerPayload).type,
-          'brand_new_event_from_1_1');
+      expect(
+        (payload as UnknownServerPayload).type,
+        'brand_new_event_from_1_1',
+      );
     });
 
     test('unknown fields are ignored at envelope and payload level', () {
@@ -394,10 +478,14 @@ void main() {
     test('spans slice to the expected tokens', () {
       final text = Utf8Text(message.content);
       final block = message.codeBlocks.single;
-      expect(text.slice(block.spans[0].startByte, block.spans[0].endByte),
-          'let');
-      expect(text.slice(block.spans[1].startByte, block.spans[1].endByte),
-          '"héllo 🌍"');
+      expect(
+        text.slice(block.spans[0].startByte, block.spans[0].endByte),
+        'let',
+      );
+      expect(
+        text.slice(block.spans[1].startByte, block.spans[1].endByte),
+        '"héllo 🌍"',
+      );
     });
 
     test('block range covers the fenced block including fences', () {
@@ -415,17 +503,23 @@ void main() {
         text,
         block.startByte,
         block.endByte,
-        block.spans.map((s) => (
-              startByte: s.startByte,
-              endByte: s.endByte,
-              className: s.className,
-            )),
+        block.spans.map(
+          (s) => (
+            startByte: s.startByte,
+            endByte: s.endByte,
+            className: s.className,
+          ),
+        ),
       );
-      expect(runs.map((r) => r.text).join(),
-          text.slice(block.startByte, block.endByte));
+      expect(
+        runs.map((r) => r.text).join(),
+        text.slice(block.startByte, block.endByte),
+      );
       expect(runs.where((r) => r.className == 'keyword').single.text, 'let');
-      expect(runs.where((r) => r.className == 'string').single.text,
-          '"héllo 🌍"');
+      expect(
+        runs.where((r) => r.className == 'string').single.text,
+        '"héllo 🌍"',
+      );
     });
   });
 }
