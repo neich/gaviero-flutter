@@ -255,7 +255,10 @@ class _MessageList extends StatelessWidget {
             ),
           );
         }
-        return MessageBubble(message: messages[messageIndex]);
+        // Keyed so a bubble's unfolded thinking state never carries over to
+        // whichever message lands on this row next.
+        final message = messages[messageIndex];
+        return MessageBubble(key: ValueKey(message.seq), message: message);
       },
     );
   }
