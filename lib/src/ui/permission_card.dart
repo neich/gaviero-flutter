@@ -72,7 +72,14 @@ class _PermissionCardState extends State<PermissionCard> {
     return true;
   }
 
-  Future<void> _decide(bool allow) async {
+  /// MCP server the "allow for this prompt" option names, or `null` when
+  /// the option is unavailable (question, non-MCP tool, or older server).
+  String? get _turnGrantServer =>
+      _ask == null && widget.controller.supportsPermissionTurnGrant
+          ? widget.request.mcpServer
+          : null;
+
+  Future<void> _decide(bool allow, {PermissionGrant? grant}) async {
     setState(() => _sending = true);
     final ask = _ask;
     final outcome = await widget.controller.permissionDecision(
@@ -84,6 +91,7 @@ class _PermissionCardState extends State<PermissionCard> {
       message: !allow && _denyNote.text.trim().isNotEmpty
           ? _denyNote.text.trim()
           : null,
+      grant: grant,
     );
     if (mounted) {
       setState(() => _sending = false);
@@ -145,6 +153,20 @@ class _PermissionCardState extends State<PermissionCard> {
                     ),
                   ),
                 ),
+              if (_turnGrantServer case final server?) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _sending
+                        ? null
+                        : () => _decide(true,
+                            grant: PermissionGrant.mcpServerTurn),
+                    icon: const Icon(Icons.done_all, size: 18),
+                    label: Text('Allow all $server calls for this prompt'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 10),
               Row(
                 children: [
