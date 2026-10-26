@@ -230,7 +230,6 @@ class _InstanceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hostPort = '${inst.machineHost}:${inst.port}';
     return ListTile(
       key: ValueKey(
         'instance-${inst.machineHost}-${inst.workspaceId ?? inst.url}',
@@ -239,7 +238,9 @@ class _InstanceRow extends StatelessWidget {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(hostPort),
+          // The relay route (`<id>-<machine>.<relay host>`); the section
+          // header already names the machine.
+          Text(Uri.tryParse(inst.url)?.host ?? inst.url),
           if (inst.lastSeen != null)
             Text(
               'Last seen ${inst.lastSeen}',

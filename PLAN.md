@@ -1318,7 +1318,7 @@ Max retries: 2.
 
 ## Manual acceptance (executor records evidence; not a gate)
 
-With a desktop running the built gaviero on the same tailnet:
+With a desktop running the built gaviero and reachable through gaviero-relay:
 
 1. `/remote` on the desktop; pair the freshly built APK (`flutter install` or `adb install`).
 2. Open **Explorer**: the workspace root folders appear. Expand one: directories first, `.git` absent.

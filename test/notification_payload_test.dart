@@ -8,16 +8,16 @@ import 'package:gaviero_remote/src/services/notifications.dart';
 void main() {
   test('payload encodes machine, workspace, and conversation', () {
     expect(
-      NotificationService.encodePayload('alpha.tailnet.ts.net', 'ws1', 'c9'),
-      'alpha.tailnet.ts.net|ws1|c9',
+      NotificationService.encodePayload('alpha.gaviero.example.com', 'ws1', 'c9'),
+      'alpha.gaviero.example.com|ws1|c9',
     );
     expect(
-      NotificationService.decodePayload('alpha.tailnet.ts.net|ws1|c9'),
-      ('alpha.tailnet.ts.net', 'ws1', 'c9'),
+      NotificationService.decodePayload('alpha.gaviero.example.com|ws1|c9'),
+      ('alpha.gaviero.example.com', 'ws1', 'c9'),
     );
     expect(
-      NotificationService.decodePayload('alpha.tailnet.ts.net||c9'),
-      ('alpha.tailnet.ts.net', '', 'c9'),
+      NotificationService.decodePayload('alpha.gaviero.example.com||c9'),
+      ('alpha.gaviero.example.com', '', 'c9'),
     );
   });
 

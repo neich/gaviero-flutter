@@ -10,6 +10,8 @@ import 'package:gaviero_remote/src/state/controller.dart';
 import 'package:gaviero_remote/src/transport/connection.dart';
 import 'package:gaviero_remote/src/ui/instance_picker_screen.dart';
 
+import 'support/relay_machine.dart';
+
 RemoteController _controllerWith(StoreDocument doc) {
   final store = InstanceStore(kv: MemoryKv())..doc = doc;
   return RemoteController(
@@ -27,22 +29,24 @@ RemoteController _controllerWith(StoreDocument doc) {
 
 StoreDocument get _twoMachinesThreeInstances => StoreDocument(
   machines: const [
-    MachineRecord(host: 'alpha', token: 't1', pairedAt: 'x'),
-    MachineRecord(host: 'beta', token: 't2', pairedAt: 'x', needsPairing: true),
+    MachineRecord(host: 'alpha', token: 't1', pairedAt: 'x', tlsCa: testTlsCa,
+        relayHost: testRelayHost, relaySecret: testRelaySecret),
+    MachineRecord(host: 'beta', token: 't2', pairedAt: 'x', needsPairing: true,
+        tlsCa: testTlsCa, relayHost: testRelayHost, relaySecret: testRelaySecret),
   ],
   instances: const [
     InstanceRecord(
       machineHost: 'alpha',
       workspaceId: 'w1',
       displayName: 'gaviero',
-      url: 'wss://alpha:1/v1/ws',
+      url: 'wss://w1-alpha/v1/ws',
       lastOnline: true,
     ),
     InstanceRecord(
       machineHost: 'alpha',
       workspaceId: 'w2',
       displayName: 'notes',
-      url: 'wss://alpha:2/v1/ws',
+      url: 'wss://w2-alpha/v1/ws',
       lastOnline: true,
       inUse: true,
     ),
@@ -50,7 +54,7 @@ StoreDocument get _twoMachinesThreeInstances => StoreDocument(
       machineHost: 'beta',
       workspaceId: 'w3',
       displayName: 'flutter',
-      url: 'wss://beta:3/v1/ws',
+      url: 'wss://w3-beta/v1/ws',
     ),
   ],
 );
