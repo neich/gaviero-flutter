@@ -33,16 +33,9 @@ const protocolVersion = ProtocolVersion(1, 3);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 
-/// `GET /v1/instances` (1.1) — on every instance listener and on the machine
-/// directory port.
+/// `GET /v1/instances` (1.1) — on every instance listener, so any of a
+/// machine's relay routes lists all of its instances.
 const instancesPath = '/v1/instances';
-
-/// Default machine directory port (PROTOCOL.md header).
-const defaultDirectoryPort = 49151;
-
-/// How far past a stored instance port we probe when that listener is gone
-/// (matches gaviero-tui `PORT_WINDOW`: derived port + 0..9).
-const instancePortWindow = 10;
 
 /// `hello.capabilities` entries (1.1). Feature-detect with these, never with
 /// the minor version.

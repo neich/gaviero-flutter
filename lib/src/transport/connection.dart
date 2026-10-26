@@ -139,13 +139,13 @@ final class RemoteConnection extends ChangeNotifier {
     return Duration(milliseconds: base + random.nextInt(500));
   }
 
-  /// [tlsCa]: the machine's pinned CA (base64 DER) when it sits behind a
-  /// VPS relay; null keeps system trust.
+  /// [tlsCa]: the machine's pinned CA (base64 DER); [relayHost]: the relay
+  /// every connection is dialled to.
   Future<void> start(
     Uri url,
     String token, {
-    String? tlsCa,
-    String? relayHost,
+    required String tlsCa,
+    required String relayHost,
   }) async {
     _url = url;
     _token = token;
@@ -204,7 +204,15 @@ final class RemoteConnection extends ChangeNotifier {
   Future<void> _connect() async {
     final url = _url;
     final token = _token;
-    if (url == null || token == null || _stopped) return;
+    final tlsCa = _tlsCa;
+    final relayHost = _relayHost;
+    if (url == null ||
+        token == null ||
+        tlsCa == null ||
+        relayHost == null ||
+        _stopped) {
+      return;
+    }
     _setPhase(ConnectionPhase.connecting);
     final WsSocket socket;
     try {
@@ -214,8 +222,8 @@ final class RemoteConnection extends ChangeNotifier {
           : await IoWsSocket.connect(
               url,
               token,
-              tlsCa: _tlsCa,
-              relayHost: _relayHost,
+              tlsCa: tlsCa,
+              relayHost: relayHost,
             );
     } on HandshakeException {
       // Reachable, but the certificate is not the one this pairing trusts
