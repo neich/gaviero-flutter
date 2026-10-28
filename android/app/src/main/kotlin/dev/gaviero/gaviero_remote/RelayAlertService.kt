@@ -30,6 +30,11 @@ import java.util.concurrent.ConcurrentHashMap
  * `gaviero-remote://open?host=&workspace=&conv=` — the deep link the app
  * already handles. Plain `HttpURLConnection` + `org.json`: no libraries.
  *
+ * Delivery while the screen is off depends on the battery-optimisation
+ * exemption (Doze otherwise holds this stream until the app is opened).
+ * `Accept-Encoding: identity` stops [HttpURLConnection]'s default gzip
+ * request from holding NDJSON lines in a compression window.
+ *
  * Config (written by [RelayAlerts] via the MethodChannel) lives in
  * SharedPreferences so the service and [BootReceiver] work with no Flutter
  * engine running.
@@ -45,12 +50,15 @@ class RelayAlertService : Service() {
         super.onCreate()
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_SERVICE, "Alert connection", NotificationManager.IMPORTANCE_MIN)
+            NotificationChannel(CHANNEL_SERVICE, "Alert connection", NotificationManager.IMPORTANCE_LOW)
                 .apply { description = "Keeps the connection that delivers agent alerts" },
         )
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ALERTS, "Agent alerts", NotificationManager.IMPORTANCE_HIGH)
-                .apply { description = "An agent finished or is waiting for you" },
+                .apply {
+                    description = "An agent finished or is waiting for you"
+                    enableVibration(true)
+                },
         )
         // Reconnect at once when the network (or the VPN) changes instead of
         // waiting for the read timeout, as ntfy does.
@@ -70,6 +78,19 @@ class RelayAlertService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val relays = loadRelays(this)
         if (relays.isEmpty()) {
+            // startForegroundService requires startForeground even when the
+            // config that arrived is empty.
+            val empty = Notification.Builder(this, CHANNEL_SERVICE)
+                .setContentTitle("Gaviero Remote")
+                .setContentText("Alert connection stopped")
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .build()
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(ID_ONGOING, empty, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(ID_ONGOING, empty)
+            }
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -123,6 +144,11 @@ class RelayAlertService : Service() {
                 conn = (URL("${relay.baseUrl}/v1/phone/stream?$query").openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15_000
                     readTimeout = 75_000 // keepalive lines arrive every 25 s
+                    useCaches = false
+                    // Default HttpURLConnection asks for gzip and inflates it.
+                    // A gzip window holds these small NDJSON lines until it
+                    // fills, so an alert does not surface when it is sent.
+                    setRequestProperty("Accept-Encoding", "identity")
                     setRequestProperty("Authorization", "Bearer ${relay.secret}")
                     setRequestProperty("Accept", "application/x-ndjson")
                 }
@@ -207,6 +233,7 @@ class RelayAlertService : Service() {
             .setAutoCancel(true)
             .setContentIntent(tap)
             .setCategory(Notification.CATEGORY_MESSAGE)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .build()
         // One notification per conversation: a newer event replaces it.
         getSystemService(NotificationManager::class.java)
@@ -227,7 +254,7 @@ class RelayAlertService : Service() {
 
     companion object {
         const val TAG = "GavieroRelay"
-        private const val CHANNEL_SERVICE = "gaviero_relay_service"
+        private const val CHANNEL_SERVICE = "gaviero_relay_service_v2"
         private const val CHANNEL_ALERTS = "gaviero_relay_alerts"
         private const val ID_ONGOING = 7301
         private const val PREFS = "gaviero_relay"

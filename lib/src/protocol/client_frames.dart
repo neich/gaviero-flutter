@@ -1,6 +1,7 @@
 /// Client → server frame payloads (19 types).
 library;
 
+import 'dto.dart' show PermissionGrant;
 import 'version.dart';
 
 void _put(Map<String, Object?> map, String key, Object? value) {
@@ -217,11 +218,16 @@ final class PermissionDecision extends ClientPayload {
   /// Free text on deny.
   final String? message;
 
+  /// 1.4: with [allow], also allow the request's `mcp_server` for the rest
+  /// of the prompt. Requires [Capability.permissionTurnGrant].
+  final PermissionGrant? grant;
+
   const PermissionDecision({
     required this.requestId,
     required this.allow,
     this.answers,
     this.message,
+    this.grant,
   });
 
   factory PermissionDecision.fromJson(Map<String, Object?> json) =>
@@ -235,6 +241,9 @@ final class PermissionDecision extends ClientPayload {
                   [for (final i in q as List<Object?>) i as int],
               ],
         message: json['message'] as String?,
+        grant: json['grant'] == null
+            ? null
+            : PermissionGrant.fromWire(json['grant'] as String),
       );
 
   @override
@@ -245,6 +254,7 @@ final class PermissionDecision extends ClientPayload {
     final map = <String, Object?>{'request_id': requestId, 'allow': allow};
     _put(map, 'answers', answers);
     _put(map, 'message', message);
+    _put(map, 'grant', grant?.wire);
     return map;
   }
 }

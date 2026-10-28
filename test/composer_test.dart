@@ -100,9 +100,49 @@ Future<(RemoteController, CapturingSocket)> connectedController({
   return (controller, socket);
 }
 
+/// Mirrors the production host ([ChatScreen]'s `ListenableBuilder`): the
+/// composer rebuilds when the controller or the mirror state changes, which is
+/// how a tab switch reaches it.
 Widget host(RemoteController controller) => MaterialApp(
-      home: Scaffold(body: Composer(controller: controller)),
+      home: Scaffold(
+        body: ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) => Composer(controller: controller),
+        ),
+      ),
     );
+
+/// One summary-only frame, the way the TUI projects a streaming transition on
+/// a conversation that is not the desktop-active tab.
+Future<void> conversationState(
+  WidgetTester tester,
+  CapturingSocket socket, {
+  required String convId,
+  required bool isStreaming,
+  String activeId = 'c1',
+}) async {
+  await tester.runAsync(() async {
+    socket.serverSend({
+      'version': {'major': 1, 'minor': 0},
+      'instance_id': 'i1',
+      'seq': _seq++,
+      'revision': 1,
+      'type': 'conversation_state_changed',
+      'payload': {
+        'conversation': {
+          'conv_id': convId,
+          'conv_revision': 1,
+          'title': convId == 'c1' ? 'First' : 'Second',
+          'is_streaming': isStreaming,
+          'auto_approve': false,
+        },
+        'active_id': activeId,
+      },
+    });
+    await Future<void>.delayed(Duration.zero);
+  });
+  await tester.pump();
+}
 
 void main() {
   testWidgets('chips come only from the server allow-list', (tester) async {
@@ -195,6 +235,41 @@ void main() {
     final frame = socket.sent.lastWhere((f) => f['type'] == 'send_prompt');
     expect((frame['payload'] as Map)['text'], 'hello agent');
     expect((frame['payload'] as Map)['conv_id'], 'c1');
+  });
+
+  testWidgets('a turn streaming in another tab does not stop this tab from '
+      'sending a prompt', (tester) async {
+    final (controller, socket) = (await tester.runAsync(connectedController))!;
+    await tester.pumpWidget(host(controller));
+    // c2 exists too; the desktop stays on c1.
+    await conversationState(tester, socket, convId: 'c2', isStreaming: false);
+    // c1 — the desktop-active tab — starts a turn.
+    await conversationState(tester, socket, convId: 'c1', isStreaming: true);
+    // The user flips to c2 without asking the desktop to switch tabs.
+    controller.state.view('c2');
+    await tester.pump();
+
+    expect(find.byTooltip('Interrupt'), findsNothing,
+        reason: 'a turn in another tab is not this tab\'s turn');
+    expect(find.byTooltip('Send'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'second provider prompt');
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+    final prompt = socket.sent.lastWhere((f) => f['type'] == 'send_prompt');
+    expect((prompt['payload'] as Map)['conv_id'], 'c2');
+    expect((prompt['payload'] as Map)['text'], 'second provider prompt');
+
+    // Back on the streaming tab the button is Stop again and interrupts that
+    // conversation, not whichever tab the desktop happens to show.
+    controller.state.view('c1');
+    await tester.pump();
+    expect(find.byTooltip('Send'), findsNothing);
+    expect(find.byTooltip('Interrupt'), findsOneWidget);
+    await tester.tap(find.byTooltip('Interrupt'));
+    await tester.pump();
+    final interrupt = socket.sent.lastWhere((f) => f['type'] == 'interrupt');
+    expect((interrupt['payload'] as Map)['conv_id'], 'c1');
   });
 
   group('@ file completion', () {

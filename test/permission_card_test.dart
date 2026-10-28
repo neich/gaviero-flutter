@@ -72,7 +72,9 @@ const askRequest = PermissionRequest(
   ]),
 );
 
-Future<(RemoteController, CapturingSocket)> connectedController() async {
+Future<(RemoteController, CapturingSocket)> connectedController({
+  List<String> capabilities = const [],
+}) async {
   final socket = CapturingSocket();
   final controller = RemoteController(
     connection: RemoteConnection(connector: (url, token) async => socket),
@@ -91,7 +93,7 @@ Future<(RemoteController, CapturingSocket)> connectedController() async {
       'instance_id': 'i1',
       'tui_version': '0.1.0',
       'workspace': {'id': 'w', 'display_name': 'w'},
-      'capabilities': <String>[],
+      'capabilities': capabilities,
       'confirm_required': <String>[],
       'allowed_slash_commands': <String>[],
       'limits': {
@@ -174,5 +176,55 @@ void main() {
     final payload = frame['payload'] as Map<String, Object?>;
     expect(payload['allow'], isTrue);
     expect(payload.containsKey('answers'), isFalse);
+    expect(payload.containsKey('grant'), isFalse);
+  });
+
+  const mcpRequest = PermissionRequest(
+    convId: 'c1',
+    requestId: 'req-3',
+    toolName: 'mcp__flutter__hot_reload',
+    description: 'Hot reload the app',
+    input: <String, Object?>{},
+    mcpServer: 'flutter',
+  );
+
+  testWidgets('allow-server-for-this-prompt sends the turn grant',
+      (tester) async {
+    final (controller, socket) = (await tester.runAsync(() =>
+        connectedController(
+            capabilities: [Capability.permissionTurnGrant])))!;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: PermissionCard(controller: controller, request: mcpRequest),
+        ),
+      ),
+    ));
+
+    final grant = find.text('Allow all flutter calls for this prompt');
+    expect(grant, findsOneWidget);
+    await tester.tap(grant);
+    await tester.pump();
+
+    final frame = socket.sent.lastWhere(
+        (f) => f['type'] == 'permission_decision');
+    final payload = frame['payload'] as Map<String, Object?>;
+    expect(payload['request_id'], 'req-3');
+    expect(payload['allow'], isTrue);
+    expect(payload['grant'], 'mcp_server_turn');
+  });
+
+  testWidgets('no turn-grant option without the server capability',
+      (tester) async {
+    final (controller, _) = (await tester.runAsync(connectedController))!;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: PermissionCard(controller: controller, request: mcpRequest),
+        ),
+      ),
+    ));
+    expect(find.textContaining('for this prompt'), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Allow'), findsOneWidget);
   });
 }

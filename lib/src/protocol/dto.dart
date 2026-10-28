@@ -409,6 +409,10 @@ final class PermissionRequest {
   final Object? input;
   final Ask? ask;
 
+  /// 1.4: MCP server the tool belongs to, present only when the request can
+  /// be answered with [PermissionGrant.mcpServerTurn].
+  final String? mcpServer;
+
   const PermissionRequest({
     required this.convId,
     required this.requestId,
@@ -416,6 +420,7 @@ final class PermissionRequest {
     required this.description,
     required this.input,
     this.ask,
+    this.mcpServer,
   });
 
   factory PermissionRequest.fromJson(Map<String, Object?> json) =>
@@ -428,6 +433,7 @@ final class PermissionRequest {
         ask: json['ask'] == null
             ? null
             : Ask.fromJson(json['ask'] as Map<String, Object?>),
+        mcpServer: json['mcp_server'] as String?,
       );
 
   Map<String, Object?> toJson() {
@@ -439,8 +445,21 @@ final class PermissionRequest {
       'input': input,
     };
     _put(map, 'ask', ask?.toJson());
+    _put(map, 'mcp_server', mcpServer);
     return map;
   }
+}
+
+/// Standing grant attached to an allow (1.4, `permission_turn_grant`).
+enum PermissionGrant {
+  /// Every tool of the request's `mcp_server` until the next prompt.
+  mcpServerTurn('mcp_server_turn');
+
+  final String wire;
+  const PermissionGrant(this.wire);
+
+  static PermissionGrant fromWire(String wire) =>
+      values.firstWhere((g) => g.wire == wire);
 }
 
 enum PermissionOutcome {
