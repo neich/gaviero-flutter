@@ -19,14 +19,13 @@ final class DirectoryFetchResult {
   const DirectoryFetchResult(this.status, this.body);
 }
 
-/// `dart:io` `HttpClient`: default certificate validation (Tailscale certs
-/// chain to Let's Encrypt), or — for a machine behind a VPS relay — trust
-/// limited to the CA its pairing QR carried ([tlsCa]).
+/// `dart:io` `HttpClient` dialled through the relay, trusting only the CA
+/// the machine's pairing QR carried ([tlsCa]).
 Future<DirectoryFetchResult> dartIoDirectoryFetch(
   Uri url,
   String bearerToken, {
-  String? tlsCa,
-  String? relayHost,
+  required String tlsCa,
+  required String relayHost,
 }) async {
   final client = httpClientFor(tlsCa, relayHost: relayHost);
   client.connectionTimeout = const Duration(seconds: 3);
@@ -193,7 +192,6 @@ final class DirectoryClient {
     if (unauthorized) {
       return _MachineProbe(host: machine.host, unauthorized: true);
     }
-    final directoryPort = Uri.tryParse(machine.directoryUrl ?? '')?.port;
     for (final inst in known) {
       if (seenOnline.contains(inst.key)) continue;
       final origin = Uri.tryParse(inst.url);
@@ -207,26 +205,6 @@ final class DirectoryClient {
       await probe(probeUrl, fallbackKey: inst.key);
       if (unauthorized) {
         return _MachineProbe(host: machine.host, unauthorized: true);
-      }
-      if (seenOnline.contains(inst.key)) continue;
-      // Relay routes never move port (the URL has none): no window to scan.
-      if (machine.relayHost != null) continue;
-      for (var delta = 1; delta < instancePortWindow; delta++) {
-        final port = origin.port + delta;
-        if (port > 65535 || port == directoryPort) continue;
-        await probe(
-          origin.replace(
-            scheme: 'https',
-            port: port,
-            path: instancesPath,
-            query: '',
-            fragment: '',
-          ),
-        );
-        if (unauthorized) {
-          return _MachineProbe(host: machine.host, unauthorized: true);
-        }
-        if (seenOnline.contains(inst.key)) break;
       }
     }
     unknown.removeAll(seenOnline);

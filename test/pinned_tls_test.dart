@@ -1,6 +1,5 @@
-/// VPS-relay pairing (`remote.tlsMode = "pinnedCa"` on the desktop): the QR
-/// carries the machine CA as `tls_ca`; the app trusts only that CA for the
-/// machine. Fixtures in `test/fixtures/pinned_tls/` were produced by the
+/// Pinned-CA trust: the pairing QR carries the machine CA as `tls_ca`; the
+/// app trusts only that CA for the machine. Fixtures in `test/fixtures/pinned_tls/` were produced by the
 /// desktop's own generator (`gaviero_remote::pairing::ensure_pinned_ca`),
 /// with a leaf valid until 2035-12-31 and CAs until ~2036-10.
 library;
@@ -25,6 +24,8 @@ String _qr({Object? tlsCa}) => jsonEncode({
       'protocol_major': 1,
       'machine': 'desk.example.com',
       'tls_ca': ?tlsCa,
+      'relay_host': 'gaviero.example.com',
+      'relay_secret': 'relay-secret',
     });
 
 void main() {
@@ -54,10 +55,6 @@ void main() {
       expect(config.machineHost, 'desk.example.com');
     });
 
-    test('a Tailscale QR has no tls_ca', () {
-      expect(parsePairingPayload(_qr(), expectedMajor: 1).tlsCa, isNull);
-    });
-
     test('a malformed tls_ca rejects the pairing instead of dropping it', () {
       expect(
         () => parsePairingPayload(_qr(tlsCa: 'garbage'), expectedMajor: 1),
@@ -71,10 +68,12 @@ void main() {
         token: 'tok',
         pairedAt: '2026-10-14T00:00:00Z',
         tlsCa: ca,
+        relayHost: 'gaviero.example.com',
+        relaySecret: 'relay-secret',
       );
-      final back = MachineRecord.fromJson(
+      final back = MachineRecord.tryFromJson(
         Map<String, Object?>.from(jsonDecode(jsonEncode(record.toJson())) as Map),
-      );
+      )!;
       expect(back.tlsCa, ca);
       expect(back.copyWith(directoryUrl: 'https://x/v1/instances').tlsCa, ca);
     });
@@ -114,13 +113,6 @@ void main() {
     test('fails on a host-name mismatch', () async {
       await expectLater(
         handshake(pinnedSecurityContext(ca), 'vps.example.com'),
-        throwsA(isA<HandshakeException>()),
-      );
-    });
-
-    test('fails with system trust when no tls_ca is stored', () async {
-      await expectLater(
-        handshake(SecurityContext.defaultContext, 'desk.example.com'),
         throwsA(isA<HandshakeException>()),
       );
     });

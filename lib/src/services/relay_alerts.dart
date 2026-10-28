@@ -29,7 +29,7 @@ final class RelayAlerts {
     final relays = <String, String>{};
     for (final m in doc.machines) {
       final host = m.relayHost, secret = m.relaySecret;
-      if (host == null || secret == null || m.needsPairing) continue;
+      if (m.needsPairing) continue;
       final (h, port) = splitRelayHost(host);
       relays.putIfAbsent(port == 443 ? 'https://$h' : 'https://$h:$port', () => secret);
     }

@@ -62,8 +62,8 @@ final class RemoteController extends ChangeNotifier {
   String? get needsPairingHost => _needsPairingHost;
   bool get isPaired => instanceStore.doc.machines.isNotEmpty;
 
-  /// Loads stored instances, refreshes the machine directory so a TUI that
-  /// fell forward to a new port is found, then reconnects to
+  /// Loads stored instances, refreshes the machine directory so online
+  /// status and URLs are current, then reconnects to
   /// [StoreDocument.lastInstance] when present.
   Future<bool> initialize() async {
     await instanceStore.load();
@@ -107,35 +107,30 @@ final class RemoteController extends ChangeNotifier {
       url: config.url,
     );
     await instanceStore.upsertInstance(inst);
-    if (config.relayHost != null) {
-      // The relay alert service replaces ntfy; it stays reliable under OEM
-      // battery managers only with the exemption (asked once per pairing).
-      unawaited(relayAlerts.sync(instanceStore.doc));
-      unawaited(relayAlerts.requestBatteryExemption());
-    }
+    // The relay alert service stays reliable under OEM battery managers only
+    // with the exemption (asked once per pairing).
+    unawaited(relayAlerts.sync(instanceStore.doc));
+    unawaited(relayAlerts.requestBatteryExemption());
     _needsPairingHost = null;
     notifyListeners();
     await connect(inst);
   }
 
-  /// Host + token only — directory refresh fills in running instances.
-  Future<void> pairMachineOnly(
-    String host,
-    String token, {
-    int directoryPort = defaultDirectoryPort,
-  }) async {
+  /// Replace the token of a machine paired by QR earlier — manual entry
+  /// cannot carry the CA or the relay fields, so it can't pair a new one.
+  /// Directory refresh then fills in running instances.
+  Future<void> pairMachineOnly(String host, String token) async {
+    final existing = instanceStore.machine(host);
+    if (existing == null) {
+      throw const PairingError(
+          'Scan the QR code from /remote first. Manual entry only replaces '
+          'the token of a machine that is already paired.');
+    }
     await instanceStore.upsertMachine(
-      MachineRecord(
-        host: host,
+      existing.copyWith(
         token: token,
-        directoryUrl: 'https://$host:$directoryPort$instancesPath',
         pairedAt: DateTime.now().toUtc().toIso8601String(),
         needsPairing: false,
-        // Manual entry cannot carry a CA: keep the one a QR pairing stored
-        // (a relay machine is unreachable without it).
-        tlsCa: instanceStore.machine(host)?.tlsCa,
-        relayHost: instanceStore.machine(host)?.relayHost,
-        relaySecret: instanceStore.machine(host)?.relaySecret,
       ),
     );
     _needsPairingHost = null;
@@ -198,8 +193,9 @@ final class RemoteController extends ChangeNotifier {
   }
 
   /// App resumed from background: a dead socket is routine (the server culls
-  /// after 60 s without traffic). Refresh the directory first so a TUI that
-  /// moved port while we were away is followed; otherwise reconnect silently.
+  /// after 60 s without traffic). Refresh the directory first so an instance
+  /// whose URL changed while we were away is followed; otherwise reconnect
+  /// silently.
   Future<void> onAppResumed() async {
     final current = _current;
     if (current == null) {

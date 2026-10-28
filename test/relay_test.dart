@@ -62,12 +62,6 @@ void main() {
       }
     });
 
-    test('a non-relay QR has no relay fields', () {
-      final c = parsePairingPayload(_qr({'tls_ca': ca}), expectedMajor: 1);
-      expect(c.relayHost, isNull);
-      expect(c.relaySecret, isNull);
-    });
-
     test('machine record round-trips the relay fields', () {
       final m = MachineRecord(
         host: 'desk.gaviero.example.com',
@@ -77,9 +71,9 @@ void main() {
         relayHost: 'gaviero.example.com',
         relaySecret: 's3',
       );
-      final back = MachineRecord.fromJson(
+      final back = MachineRecord.tryFromJson(
         Map<String, Object?>.from(jsonDecode(jsonEncode(m.toJson())) as Map),
-      );
+      )!;
       expect(back.relayHost, 'gaviero.example.com');
       expect(back.relaySecret, 's3');
       final updated = back.copyWith(directoryUrl: 'https://x/v1/instances');
@@ -111,7 +105,6 @@ void main() {
               relayHost: 'other.test:8443', relaySecret: 'B'),
           MachineRecord(host: 'old.r2.test', token: 't', pairedAt: '', tlsCa: ca,
               relayHost: 'r2.test', relaySecret: 'C', needsPairing: true),
-          const MachineRecord(host: 'tail.ts.net', token: 't', pairedAt: ''),
         ],
         instances: const [
           InstanceRecord(machineHost: 'desk.r.test', workspaceId: 'w1',

@@ -16,6 +16,8 @@ import 'package:gaviero_remote/src/transport/connection.dart';
 import 'package:gaviero_remote/src/transport/socket.dart';
 import 'package:gaviero_remote/src/ui/permission_card.dart';
 
+import 'support/relay_machine.dart';
+
 final class CapturingSocket implements WsSocket {
   final _controller = StreamController<dynamic>();
   final sent = <Map<String, Object?>>[];
@@ -78,7 +80,8 @@ Future<(RemoteController, CapturingSocket)> connectedController({
     connection: RemoteConnection(connector: (url, token) async => socket),
     state: AppState(),
   );
-  await controller.connection.start(Uri.parse('wss://h/v1/ws'), 't');
+  await controller.connection.start(Uri.parse('wss://h/v1/ws'), 't',
+      tlsCa: testTlsCa, relayHost: testRelayHost);
   socket.serverSend({
     'version': {'major': 1, 'minor': 0},
     'instance_id': 'i1',

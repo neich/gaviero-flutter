@@ -27,9 +27,9 @@ final class WorkspaceInfo {
   Map<String, Object?> toJson() => {'id': id, 'display_name': displayName};
 }
 
-/// The machine an instance runs on (1.1). `host` is the MagicDNS name the
-/// certificate covers; `directoryUrl` is the machine directory
-/// (`https://<host>:<directoryPort>/v1/instances`) when enabled.
+/// The machine an instance runs on (1.1). `host` is the machine name the
+/// certificate covers (`<machine>.<relay host>`); `directoryUrl` is the
+/// instance's `https://<route>/v1/instances`, which lists the whole machine.
 final class MachineInfo {
   final String host;
   final String? directoryUrl;
