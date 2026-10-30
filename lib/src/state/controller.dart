@@ -419,10 +419,16 @@ final class RemoteController extends ChangeNotifier {
     String turnId,
     TurnReviewActionKind action, {
     String? path,
+    String? folder,
   }) async {
     if (!supportsTurnReview) return const CommandDropped();
     final outcome = await connection.send(
-      TurnReviewAction(turnId: turnId, action: action, path: path),
+      TurnReviewAction(
+        turnId: turnId,
+        action: action,
+        path: path,
+        folder: folder,
+      ),
     );
     if (outcome case CommandFail(:final error)
         when error.code == ErrorCode.unknownTurnReview) {

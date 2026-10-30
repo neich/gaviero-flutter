@@ -29,7 +29,7 @@ final class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-const protocolVersion = ProtocolVersion(1, 4);
+const protocolVersion = ProtocolVersion(1, 5);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 

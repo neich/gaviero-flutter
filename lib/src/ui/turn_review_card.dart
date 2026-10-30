@@ -4,7 +4,9 @@
 /// desktop: Accept / Reject one file, Accept all / Reject all for the files
 /// still pending. Reject goes back to the pre-prompt version. Decisions are
 /// final; a repeat is harmless, and a review the desktop finished first
-/// (`unknown_turn_review`) is a calm, benign race.
+/// (`unknown_turn_review`) is a calm, benign race. Files are grouped under a
+/// header per workspace folder (1.5 `folder`); an action names its file by
+/// `(folder, path)`, since two folders can change the same path.
 library;
 
 import 'package:flutter/material.dart';
@@ -36,10 +38,14 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
     if (old.review.turnId != widget.review.turnId) _sending = false;
   }
 
-  Future<void> _act(TurnReviewActionKind action, {String? path}) async {
+  Future<void> _act(TurnReviewActionKind action, {TurnReviewFile? file}) async {
     setState(() => _sending = true);
-    final outcome = await widget.controller
-        .turnReviewAction(widget.review.turnId, action, path: path);
+    final outcome = await widget.controller.turnReviewAction(
+      widget.review.turnId,
+      action,
+      path: file?.path,
+      folder: file?.folder,
+    );
     if (mounted) {
       setState(() => _sending = false);
       showOutcome(context, outcome);
@@ -108,15 +114,19 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
                   text: warning,
                 ),
               const SizedBox(height: 6),
-              for (final file in review.files)
-                _FileRow(
-                  file: file,
-                  sending: _sending,
-                  onAccept: () =>
-                      _act(TurnReviewActionKind.keepFile, path: file.path),
-                  onReject: () =>
-                      _act(TurnReviewActionKind.revertFile, path: file.path),
-                ),
+              for (final group in groupByFolder(review.files)) ...[
+                if (group.folder case final folder?)
+                  _FolderHeader(folder: folder, files: group.files),
+                for (final file in group.files)
+                  _FileRow(
+                    file: file,
+                    sending: _sending,
+                    onAccept: () =>
+                        _act(TurnReviewActionKind.keepFile, file: file),
+                    onReject: () =>
+                        _act(TurnReviewActionKind.revertFile, file: file),
+                  ),
+              ],
               const SizedBox(height: 4),
               // The whole turn: applies to every file not decided yet.
               Row(
@@ -143,6 +153,61 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The files of one workspace folder. [folder] is `null` for files from a
+/// server older than 1.5, which are listed without a header.
+typedef FolderGroup = ({String? folder, List<TurnReviewFile> files});
+
+/// Files grouped by `TurnReviewFile.folder`, folders in order of first
+/// appearance and files in the review's order within each — the same
+/// grouping as the desktop's TURN REVIEW list.
+List<FolderGroup> groupByFolder(List<TurnReviewFile> files) {
+  final groups = <String?, List<TurnReviewFile>>{};
+  for (final file in files) {
+    groups.putIfAbsent(file.folder, () => []).add(file);
+  }
+  return [
+    for (final MapEntry(:key, :value) in groups.entries)
+      (folder: key, files: value),
+  ];
+}
+
+class _FolderHeader extends StatelessWidget {
+  final String folder;
+  final List<TurnReviewFile> files;
+
+  const _FolderHeader({required this.folder, required this.files});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final left =
+        files.where((f) => f.decision == TurnFileDecision.pending).length;
+    return Padding(
+      key: ValueKey('turn-review-folder-$folder'),
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: Row(
+        children: [
+          Icon(Icons.folder_outlined, size: 16, color: scheme.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              folder,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelLarge?.copyWith(color: scheme.primary),
+            ),
+          ),
+          Text(
+            left == 0 ? 'all decided' : '$left of ${files.length} left',
+            style: textTheme.labelSmall?.copyWith(color: Colors.white54),
+          ),
+        ],
       ),
     );
   }

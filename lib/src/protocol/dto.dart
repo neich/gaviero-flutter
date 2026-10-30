@@ -891,6 +891,11 @@ enum TurnOutcome {
 final class TurnReviewFile {
   /// Workspace-folder-relative, `/`-separated. Echoed by `turn_review_action`.
   final String path;
+
+  /// 1.5: the workspace folder's label, unique within the review. The card
+  /// groups files by it, and `turn_review_action` echoes it with [path] —
+  /// two folders can change the same path. `null` from older servers.
+  final String? folder;
   final TurnFileChange change;
   final TurnFileDecision decision;
 
@@ -908,6 +913,7 @@ final class TurnReviewFile {
 
   const TurnReviewFile({
     required this.path,
+    this.folder,
     required this.change,
     required this.decision,
     required this.revertible,
@@ -922,6 +928,7 @@ final class TurnReviewFile {
     final decision = json['decision'] as String;
     return TurnReviewFile(
       path: json['path'] as String,
+      folder: json['folder'] as String?,
       change: TurnFileChange.fromWire(change),
       decision: TurnFileDecision.fromWire(decision),
       revertible: json['revertible'] as bool,
@@ -936,13 +943,14 @@ final class TurnReviewFile {
   }
 
   Map<String, Object?> toJson() {
-    final map = <String, Object?>{
-      'path': path,
+    final map = <String, Object?>{'path': path};
+    _put(map, 'folder', folder);
+    map.addAll({
       'change': changeWire ?? change.wire,
       'decision': decisionWire ?? decision.wire,
       'revertible': revertible,
       'binary': binary,
-    };
+    });
     if (overlapWith.isNotEmpty) map['overlap_with'] = overlapWith;
     return map;
   }
