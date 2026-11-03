@@ -413,6 +413,11 @@ final class PermissionRequest {
   /// be answered with [PermissionGrant.mcpServerTurn].
   final String? mcpServer;
 
+  /// 1.6 (`permission_grants`): every grant this request accepts with an
+  /// allow, in the desktop's display order. Values this client does not
+  /// know are dropped (never offered).
+  final List<PermissionGrant> grants;
+
   const PermissionRequest({
     required this.convId,
     required this.requestId,
@@ -421,6 +426,7 @@ final class PermissionRequest {
     required this.input,
     this.ask,
     this.mcpServer,
+    this.grants = const [],
   });
 
   factory PermissionRequest.fromJson(Map<String, Object?> json) =>
@@ -434,6 +440,10 @@ final class PermissionRequest {
             ? null
             : Ask.fromJson(json['ask'] as Map<String, Object?>),
         mcpServer: json['mcp_server'] as String?,
+        grants: [
+          for (final g in json['grants'] as List<Object?>? ?? const [])
+            ?PermissionGrant.tryFromWire(g as String),
+        ],
       );
 
   Map<String, Object?> toJson() {
@@ -446,20 +456,40 @@ final class PermissionRequest {
     };
     _put(map, 'ask', ask?.toJson());
     _put(map, 'mcp_server', mcpServer);
+    if (grants.isNotEmpty) map['grants'] = [for (final g in grants) g.wire];
     return map;
   }
 }
 
-/// Standing grant attached to an allow (1.4, `permission_turn_grant`).
+/// Standing grant attached to an allow (1.4, `permission_turn_grant`; the
+/// session and [turnAll] values since 1.6, `permission_grants`).
 enum PermissionGrant {
+  /// This tool for the rest of the conversation (desktop `a`).
+  toolSession('tool_session'),
+
+  /// Every tool of the request's `mcp_server` for the rest of the
+  /// conversation (desktop `A`).
+  mcpServerSession('mcp_server_session'),
+
   /// Every tool of the request's `mcp_server` until the next prompt.
-  mcpServerTurn('mcp_server_turn');
+  mcpServerTurn('mcp_server_turn'),
+
+  /// Every later request — shell commands included; questions and network
+  /// asks still ask — until the next prompt (desktop `p`).
+  turnAll('turn_all');
 
   final String wire;
   const PermissionGrant(this.wire);
 
   static PermissionGrant fromWire(String wire) =>
       values.firstWhere((g) => g.wire == wire);
+
+  static PermissionGrant? tryFromWire(String wire) {
+    for (final g in values) {
+      if (g.wire == wire) return g;
+    }
+    return null;
+  }
 }
 
 enum PermissionOutcome {
@@ -891,6 +921,11 @@ enum TurnOutcome {
 final class TurnReviewFile {
   /// Workspace-folder-relative, `/`-separated. Echoed by `turn_review_action`.
   final String path;
+
+  /// 1.5: display label of the workspace folder [path] is relative to. The
+  /// review lists files under a header per folder; echoed by
+  /// `turn_review_action` exactly when present. `null` from older servers.
+  final String? folder;
   final TurnFileChange change;
   final TurnFileDecision decision;
 
@@ -908,6 +943,7 @@ final class TurnReviewFile {
 
   const TurnReviewFile({
     required this.path,
+    this.folder,
     required this.change,
     required this.decision,
     required this.revertible,
@@ -922,6 +958,7 @@ final class TurnReviewFile {
     final decision = json['decision'] as String;
     return TurnReviewFile(
       path: json['path'] as String,
+      folder: json['folder'] as String?,
       change: TurnFileChange.fromWire(change),
       decision: TurnFileDecision.fromWire(decision),
       revertible: json['revertible'] as bool,
@@ -938,6 +975,7 @@ final class TurnReviewFile {
   Map<String, Object?> toJson() {
     final map = <String, Object?>{
       'path': path,
+      if (folder != null) 'folder': folder,
       'change': changeWire ?? change.wire,
       'decision': decisionWire ?? decision.wire,
       'revertible': revertible,

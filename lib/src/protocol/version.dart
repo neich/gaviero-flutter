@@ -1,6 +1,7 @@
 /// Wire protocol version, subprotocol, and paths — vendored from
 /// `protocol/protocol.schema.json` (Plan A owns 1.0, Plan C owns the 1.1
-/// additions, 1.2 adds turn review; a codec test asserts these constants
+/// additions, 1.2 adds turn review, 1.5 turn-review folders, 1.6 permission
+/// grants; a codec test asserts these constants
 /// match the vendored schema).
 library;
 
@@ -29,7 +30,7 @@ final class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-const protocolVersion = ProtocolVersion(1, 4);
+const protocolVersion = ProtocolVersion(1, 6);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 
@@ -66,6 +67,10 @@ abstract final class Capability {
   /// 1.4: `permission_decision.grant = mcp_server_turn` allows a request's
   /// `mcp_server` for the rest of the current prompt.
   static const permissionTurnGrant = 'permission_turn_grant';
+
+  /// 1.6: `permission_request.grants` lists every standing answer a request
+  /// accepts — the desktop's `a` / `A` / `p` keys plus `mcp_server_turn`.
+  static const permissionGrants = 'permission_grants';
 }
 
 /// `before_seq` to send to a server without [Capability.latestPage]: 2^53 − 1,

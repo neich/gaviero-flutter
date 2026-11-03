@@ -218,8 +218,9 @@ final class PermissionDecision extends ClientPayload {
   /// Free text on deny.
   final String? message;
 
-  /// 1.4: with [allow], also allow the request's `mcp_server` for the rest
-  /// of the prompt. Requires [Capability.permissionTurnGrant].
+  /// 1.4: with [allow], also record a standing allow. `mcp_server_turn`
+  /// requires [Capability.permissionTurnGrant]; since 1.6 any value in the
+  /// request's `grants` ([Capability.permissionGrants]).
   final PermissionGrant? grant;
 
   const PermissionDecision({
@@ -340,10 +341,15 @@ final class TurnReviewAction extends ClientPayload {
   /// Required for `keep_file` / `revert_file`.
   final String? path;
 
+  /// 1.5: with [path], the file's `TurnReviewFile.folder` — sent exactly when
+  /// the file carried one, so the same path in two folders names one file.
+  final String? folder;
+
   const TurnReviewAction({
     required this.turnId,
     required this.action,
     this.path,
+    this.folder,
   });
 
   factory TurnReviewAction.fromJson(Map<String, Object?> json) =>
@@ -351,6 +357,7 @@ final class TurnReviewAction extends ClientPayload {
         turnId: json['turn_id'] as String,
         action: TurnReviewActionKind.fromWire(json['action'] as String),
         path: json['path'] as String?,
+        folder: json['folder'] as String?,
       );
 
   @override
@@ -360,6 +367,7 @@ final class TurnReviewAction extends ClientPayload {
   Map<String, Object?> toPayloadJson() {
     final map = <String, Object?>{'turn_id': turnId, 'action': action.wire};
     _put(map, 'path', path);
+    _put(map, 'folder', folder);
     return map;
   }
 }

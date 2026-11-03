@@ -389,6 +389,12 @@ final class RemoteController extends ChangeNotifier {
   bool get supportsPermissionTurnGrant =>
       connection.hello?.hasCapability(Capability.permissionTurnGrant) ?? false;
 
+  /// The server advertises [Capability.permissionGrants]: every request lists
+  /// the grants it accepts in `PermissionRequest.grants`, and the card offers
+  /// exactly those (the desktop's a / A / p answers).
+  bool get supportsPermissionGrants =>
+      connection.hello?.hasCapability(Capability.permissionGrants) ?? false;
+
   Future<CommandOutcome> reviewAction(
     int proposalId,
     ReviewActionKind action, {
@@ -423,10 +429,16 @@ final class RemoteController extends ChangeNotifier {
     String turnId,
     TurnReviewActionKind action, {
     String? path,
+    String? folder,
   }) async {
     if (!supportsTurnReview) return const CommandDropped();
     final outcome = await connection.send(
-      TurnReviewAction(turnId: turnId, action: action, path: path),
+      TurnReviewAction(
+        turnId: turnId,
+        action: action,
+        path: path,
+        folder: folder,
+      ),
     );
     if (outcome case CommandFail(:final error)
         when error.code == ErrorCode.unknownTurnReview) {
