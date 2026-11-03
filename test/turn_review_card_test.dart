@@ -195,6 +195,68 @@ void main() {
     });
   });
 
+  testWidgets('1.5 folders: a header per folder, and actions echo folder',
+      (tester) async {
+    final (controller, socket) = (await tester.runAsync(connected))!;
+    const twoFolders = TurnReview(
+      turnId: 'turn-1',
+      convId: 'c1',
+      outcome: TurnOutcome.completed,
+      files: [
+        TurnReviewFile(
+          path: 'README.md',
+          folder: 'gaviero',
+          change: TurnFileChange.modified,
+          decision: TurnFileDecision.pending,
+          revertible: true,
+          binary: false,
+        ),
+        TurnReviewFile(
+          path: 'README.md',
+          folder: 'gaviero-flutter',
+          change: TurnFileChange.modified,
+          decision: TurnFileDecision.pending,
+          revertible: true,
+          binary: false,
+        ),
+        TurnReviewFile(
+          path: 'src/lib.rs',
+          folder: 'gaviero',
+          change: TurnFileChange.added,
+          decision: TurnFileDecision.pending,
+          revertible: true,
+          binary: false,
+        ),
+      ],
+    );
+    controller.state.applyEnvelope(env(snapshotWith([twoFolders])));
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(controller: controller)));
+
+    final gaviero = find.byKey(const ValueKey('turn-review-folder-gaviero'));
+    final flutter =
+        find.byKey(const ValueKey('turn-review-folder-gaviero-flutter'));
+    expect(gaviero, findsOneWidget);
+    expect(flutter, findsOneWidget);
+    // Grouped in order of first appearance: both gaviero files come before
+    // the gaviero-flutter header.
+    final lib = find.byKey(const ValueKey('turn-file-gaviero/src/lib.rs'));
+    expect(tester.getTopLeft(lib).dy,
+        lessThan(tester.getTopLeft(flutter).dy));
+
+    final flutterReadme =
+        find.byKey(const ValueKey('turn-file-gaviero-flutter/README.md'));
+    await tester.ensureVisible(flutterReadme);
+    await tester.tap(find.descendant(
+        of: flutterReadme, matching: find.widgetWithText(TextButton, 'Reject')));
+    await tester.pump();
+    expect(lastPayload(socket, 'turn_review_action'), {
+      'turn_id': 'turn-1',
+      'action': 'revert_file',
+      'path': 'README.md',
+      'folder': 'gaviero-flutter',
+    });
+  });
+
   testWidgets('accept sends keep_file for that file', (tester) async {
     final (controller, socket) = (await tester.runAsync(connected))!;
     controller.state.applyEnvelope(env(snapshotWith([review()])));

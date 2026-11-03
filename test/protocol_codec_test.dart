@@ -363,6 +363,64 @@ void main() {
       );
     });
 
+    test('1.5 turn_review_action and files carry folder', () {
+      final action =
+          ClientEnvelope.fromJson(readFixture('client', 'turn_review_action'))
+                  .payload
+              as TurnReviewAction;
+      expect(action.folder, 'gaviero');
+      final updated =
+          ServerEnvelope.fromJson(readFixture('server', 'turn_review_updated'))
+                  .payload
+              as TurnReviewEvent;
+      expect(
+        [for (final f in updated.review.files) f.folder],
+        containsAll(['gaviero', 'gaviero-flutter']),
+      );
+      const flat = TurnReviewAction(
+        turnId: 't1',
+        action: TurnReviewActionKind.keepFile,
+        path: 'a.rs',
+      );
+      expect(flat.toPayloadJson().containsKey('folder'), isFalse);
+    });
+
+    test('1.6 permission_request.grants decode in order; unknown dropped', () {
+      final json = readFixture('server', 'permission_request');
+      final payload = json['payload'] as Map<String, Object?>;
+      expect(
+        (ServerEnvelope.fromJson(json).payload as PermissionRequestFrame)
+            .request
+            .grants,
+        isEmpty,
+      );
+      payload.remove('ask');
+      payload['tool_name'] = 'mcp__flutter__hot_reload';
+      payload['mcp_server'] = 'flutter';
+      payload['grants'] = [
+        'tool_session',
+        'mcp_server_session',
+        'mcp_server_turn',
+        'turn_all',
+      ];
+      final envelope = ServerEnvelope.fromJson(json);
+      final request = (envelope.payload as PermissionRequestFrame).request;
+      expect(request.grants, PermissionGrant.values);
+      expect(deepEquals(envelope.toJson(), json), isTrue);
+
+      payload['grants'] = ['turn_all', 'some_future_grant'];
+      expect(
+        (ServerEnvelope.fromJson(json).payload as PermissionRequestFrame)
+            .request
+            .grants,
+        [PermissionGrant.turnAll],
+      );
+      expect(
+        File('protocol/protocol.schema.json').readAsStringSync(),
+        allOf([for (final g in PermissionGrant.values) contains('"${g.wire}"')]),
+      );
+    });
+
     test('turn_review_action encodes path only for per-file actions', () {
       final fixture =
           ClientEnvelope.fromJson(readFixture('client', 'turn_review_action'))

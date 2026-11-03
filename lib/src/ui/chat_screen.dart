@@ -60,6 +60,12 @@ class _ChatScreenState extends State<ChatScreen> {
             turnReviews && conv != null && pendingReview == null
             ? controller.state.turnReviewResolutionFor(conv.summary.convId)
             : null;
+        // The instance (workspace folder) name leads the subtitle so the
+        // user can tell which gaviero instance this conversation lives on.
+        final subtitle = [
+          ?controller.current?.displayName,
+          ?conv?.summary.model,
+        ].where((s) => s.isNotEmpty).join(' · ');
         return Scaffold(
           drawer: ConversationDrawer(controller: controller),
           appBar: AppBar(
@@ -69,10 +75,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 Text(
                   conv?.summary.title ?? 'Gaviero Remote',
                   style: const TextStyle(fontSize: 17),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                if (conv?.summary.model != null)
+                if (subtitle.isNotEmpty)
                   Text(
-                    conv!.summary.model!,
+                    subtitle,
+                    key: const Key('chat-title-subtitle'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelSmall
                         ?.copyWith(color: Colors.white54),
                   ),
