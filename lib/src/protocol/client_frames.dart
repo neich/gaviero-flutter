@@ -218,8 +218,9 @@ final class PermissionDecision extends ClientPayload {
   /// Free text on deny.
   final String? message;
 
-  /// 1.4: with [allow], also allow the request's `mcp_server` for the rest
-  /// of the prompt. Requires [Capability.permissionTurnGrant].
+  /// 1.4: with [allow], also record a standing allow. `mcp_server_turn`
+  /// requires [Capability.permissionTurnGrant]; since 1.6 any value in the
+  /// request's `grants` ([Capability.permissionGrants]).
   final PermissionGrant? grant;
 
   const PermissionDecision({

@@ -385,6 +385,12 @@ final class RemoteController extends ChangeNotifier {
   bool get supportsPermissionTurnGrant =>
       connection.hello?.hasCapability(Capability.permissionTurnGrant) ?? false;
 
+  /// The server advertises [Capability.permissionGrants]: every request lists
+  /// the grants it accepts in `PermissionRequest.grants`, and the card offers
+  /// exactly those (the desktop's a / A / p answers).
+  bool get supportsPermissionGrants =>
+      connection.hello?.hasCapability(Capability.permissionGrants) ?? false;
+
   Future<CommandOutcome> reviewAction(
     int proposalId,
     ReviewActionKind action, {

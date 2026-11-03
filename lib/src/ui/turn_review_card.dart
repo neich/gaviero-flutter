@@ -288,6 +288,7 @@ class _FileRow extends StatelessWidget {
       if (file.binary) 'binary',
     ];
     return Card(
+      key: ValueKey('turn-file-${file.folder ?? ''}/${file.path}'),
       margin: const EdgeInsets.symmetric(vertical: 3),
       color: scheme.surfaceContainerHigh,
       child: Padding(
