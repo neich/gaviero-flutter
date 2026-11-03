@@ -4,26 +4,59 @@ Android (and iOS-capable) client for the gaviero TUI's remote sidecar. Pair
 once per machine, pick which running instance to attach to, and drive every
 conversation tab independently of the desktop's active tab.
 
-Requires a gaviero TUI with remote enabled (default), reachable either on the
-same Tailscale tailnet or through **gaviero-relay** (one subdomain on 443, no
-Tailscale, no ntfy — see `docs/remote-relay.md` in the gaviero repo and the
-sibling `gaviero-relay` project). Wire protocol **1.3** (`gaviero.v1`); a 1.0
-desktop still pairs and chats — it just has no instance directory and
-newest-page requests use the `before_seq: 9007199254740991` fallback.
+Everything goes through **gaviero-relay**: one subdomain on port 443 of a VPS
+you control. The relay is the
+optional `crates/gaviero-relay` server in the gaviero repo; deployment is in its
+README, and the full setup is in `docs/remote-relay.md`. Wire protocol **1.3**
+(`gaviero.v1`).
 
-**Relay machines:**
-- **Pinned CA:** the pairing QR carries the machine's private CA (`tls_ca`). The app trusts **only** that CA for the machine — never the system roots — and keeps host-name checking on.
-- **Routing:** with `relay_host` in the QR, every connection to that machine is dialled to the relay on 443. TLS starts with SNI = the URL host, which is the instance's route and is never looked up in DNS. Both are in `lib/src/services/pinned_tls.dart`.
-- **Pair by QR:** manual entry can't carry the CA or the relay fields. It keeps ones that an earlier QR pairing stored.
+```
+phone ──TLS (SNI = <workspace-id>-<machine>.<relay host>)──▶ relay :443 ──▶ gaviero sidecar
+gaviero ──wss://<relay host>/v1/host (dials out)──────────▶ relay
+phone alert service ◀── /v1/phone/stream ── relay
+```
+
+## Desktop setup
+
+Put the same two keys in `~/.gaviero/settings.json` on every machine:
+
+```json
+{ "remote": { "relay": {
+    "host": "gaviero.example.com",
+    "secret": "<the relay's --secret-file contents>"
+} } }
+```
+
+Without `remote.relay.host` the sidecar does not start. With it, the sidecar
+binds loopback only and dials out to the relay, so the machine needs no open
+port and no DNS record. In the TUI, `/remote` shows
+`Relay: wss://… — route … — registered`. Any other state (a 401, a timeout)
+tells you why the phone can't connect.
+
+## Security
+
+- **End-to-end TLS:** TLS runs from the phone to the sidecar. The relay only
+  sees the route name and ciphertext.
+- **Pinned CA:** the pairing QR carries the machine's private CA (`tls_ca`).
+  The app trusts **only** that CA for the machine (never the system roots)
+  and keeps host-name checking on.
+- **Routing:** with `relay_host` in the QR, every connection to that machine is
+  dialled to the relay on 443. TLS starts with SNI = the URL host, which is the
+  instance's route and is never looked up in DNS. Both pieces are in
+  `lib/src/services/pinned_tls.dart`.
 
 ## Pairing
 
 1. On the PC, in the gaviero TUI, run `/remote`.
 2. In the app, scan the QR (FAB on the instance picker, or **Pair a
-   machine**). Manual entry takes host, token, and optional instance /
-   directory ports (directory defaults to `49151`).
+   machine**).
 3. The token is stored in platform secure storage. It is never logged or
    put in a URL.
+
+Pair by QR: it is the only way to pair a machine, because only the QR carries
+the CA and the relay fields. The manual form (machine + token) only replaces
+the token of a machine already paired by QR. A QR from a gaviero without
+`remote.relay.host` is refused with that hint.
 
 A QR's token is a **machine** token: every workspace on that PC reuses it.
 `/remote rotate` on the desktop invalidates it; the app returns to pairing
@@ -32,11 +65,13 @@ for that machine only.
 ## Instances
 
 The home screen lists every paired machine and every instance last seen on
-it.
+it. One QR is enough per machine: every instance's route serves the machine's
+instance list (`/v1/instances`) through the relay, so the other running
+workspaces on that PC show up without scanning their QRs.
 
 | Chip | Meaning |
 |---|---|
-| online | Directory listed it (heartbeat ≤ 90 s) |
+| online | Listed by the machine (heartbeat ≤ 90 s) |
 | in use | Another phone is connected — connecting replaces it |
 | offline | Known, but not listed this refresh |
 | unknown | `GET /v1/instances` returned 404 (1.0 desktop); still connectable |
@@ -48,33 +83,29 @@ forgets that instance; machine overflow forgets the whole machine.
 If a last-used instance is stored, the app opens chat immediately; the
 connection banner covers "instance offline".
 
-## Always-on alerts (gaviero-relay)
+## Alerts
 
-When a relay machine is paired, the app starts its own alert service,
-`RelayAlertService.kt`. It is a `specialUse` foreground service with a
-permanent low-priority notification, and it holds the relay's
-`/v1/phone/stream` (NDJSON over HTTPS):
-- **Delivery:** it posts "<workspace> · Agent finished / needs you" while the phone is locked or the app is closed.
-- **Resilience:** it reconnects on network/VPN changes, restarts after a reboot (`BootReceiver.kt`), and asks once for the battery-optimisation exemption.
-- **Tapping** an alert opens `gaviero-remote://open?host=&workspace=&conv=`.
-- **No duplicates:** in-app local notifications are skipped for relay machines.
-- **Plumbing:** native Kotlin with `HttpURLConnection` + `org.json`, so no new package. Dart only pushes the config through the `dev.gaviero/relay_alerts` MethodChannel (`lib/src/services/relay_alerts.dart`).
+Pairing a relay machine starts the app's own alert service,
+`RelayAlertService.kt`, and asks once for the battery-optimisation
+exemption. The ntfy app is not needed. The service is a `specialUse`
+foreground service with a permanent low-priority notification. It holds the
+relay's `/v1/phone/stream` (NDJSON over HTTPS), one stream per relay.
+- **Delivery:** it posts "<workspace> · Agent finished / needs you" while the
+  phone is locked or the app is closed. The relay sends only
+  `{machine, workspace, conv, kind}`; the app writes the text.
+- **Resilience:** it reconnects on network/VPN changes and restarts after a
+  reboot (`BootReceiver.kt`).
+- **Tapping** an alert opens `gaviero-remote://open?host=&workspace=&conv=`,
+  the conversation if the instance is paired, otherwise the instance picker.
+- **No duplicates:** in-app local notifications are skipped for relay
+  machines.
+- **Plumbing:** native Kotlin with `HttpURLConnection` + `org.json`, so no new
+  package. Dart only pushes the config through the `dev.gaviero/relay_alerts`
+  MethodChannel (`lib/src/services/relay_alerts.dart`).
 
-## Always-on alerts (ntfy, Tailscale setups)
-
-Local notifications only fire while this app is connected (and die with
-Android doze / the sidecar's idle cull). For a ping when **any** desktop
-session finishes — even with the phone locked and this app not connected —
-install the **ntfy** app, then in the TUI:
-
-1. Set `notifications.ntfy.enabled: true` in user settings, restart gaviero.
-2. Run `/ntfy` and scan the QR (or open the `ntfy://…` link) in ntfy.
-3. Pair machines in Gaviero Remote as today.
-
-Tapping an ntfy notification opens this app at
-`gaviero-remote://open?host=&workspace=&conv=` when the instance is already
-paired; otherwise the instance picker is shown. This app does **not**
-subscribe to ntfy itself.
+On the desktop, ntfy publishing still runs while
+`notifications.ntfy.enabled` is on. Turn it off once relay alerts reach your
+phone.
 
 ## Tabs
 
@@ -138,4 +169,4 @@ flutter build apk --release
 
 Toolchain pin: Flutter 3.47.4 / Dart 3.13.3. Do not add `http`, `dio`,
 Riverpod, or a router package. `app_links` (^7.2.1) is the one extra package
-this plan allowed (ntfy click → open instance).
+allowed; it routes alert taps (`gaviero-remote://open?…`) to the instance.

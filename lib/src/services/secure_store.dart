@@ -1,16 +1,16 @@
-/// Pairing configuration — host + bearer token — kept in
-/// `flutter_secure_storage`. The QR payload is the only intentional display
-/// of the token; it never appears in a URL, query string, or log.
+/// Pairing configuration parsed from the `/remote` QR. The QR payload is
+/// the only intentional display of the token; it never appears in a URL,
+/// query string, or log.
 library;
 
 import 'dart:convert';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
 import 'pinned_tls.dart';
 
 final class PairingConfig {
-  /// `wss://host.tailnet.ts.net:PORT/v1/ws`
+  /// `wss://<route>/v1/ws`, where the route
+  /// (`<workspace-id>-<machine>.<relay host>`) is sent as SNI to the relay
+  /// and never looked up in DNS.
   final String url;
 
   /// The machine token (1.1) unless the workspace opted out of machine
@@ -23,24 +23,23 @@ final class PairingConfig {
   /// 1.1, optional: hex workspace identity.
   final String? workspaceId;
 
-  /// 1.1, optional: the MagicDNS host the token is scoped to.
+  /// 1.1, optional: the machine host (`<machine>.<relay host>`) the token
+  /// is scoped to.
   final String? machine;
 
-  /// 1.1, optional: `https://<host>:<directoryPort>/v1/instances`.
+  /// 1.1, optional: `https://<route>/v1/instances`.
   final String? directoryUrl;
 
-  /// Optional: the machine's private CA (base64 DER) when it is reached
-  /// through a VPS relay (`remote.tlsMode = "pinnedCa"`). Only this CA is
-  /// trusted for the machine.
-  final String? tlsCa;
+  /// The machine's private CA (base64 DER). Only this CA is trusted for the
+  /// machine.
+  final String tlsCa;
 
-  /// gaviero-relay: every connection to this machine is dialled to
-  /// `relayHost` (port 443 unless `host:port`) and names the instance by
-  /// SNI. The URL host is the route and is never looked up in DNS.
-  final String? relayHost;
+  /// Every connection to this machine is dialled to `relayHost` (port 443
+  /// unless `host:port`) and names the instance by SNI.
+  final String relayHost;
 
-  /// gaviero-relay: bearer secret for the relay's notification stream.
-  final String? relaySecret;
+  /// Bearer secret for the relay's notification stream.
+  final String relaySecret;
 
   const PairingConfig({
     required this.url,
@@ -49,13 +48,13 @@ final class PairingConfig {
     this.workspaceId,
     this.machine,
     this.directoryUrl,
-    this.tlsCa,
-    this.relayHost,
-    this.relaySecret,
+    required this.tlsCa,
+    required this.relayHost,
+    required this.relaySecret,
   });
 
   /// The machine this pairing belongs to: the QR's `machine` when present,
-  /// else the host of the instance URL (1.0 QR / manual entry).
+  /// else the host of the instance URL.
   String get machineHost => machine ?? Uri.parse(url).host;
 }
 
@@ -69,10 +68,11 @@ final class PairingError implements Exception {
 }
 
 /// Parses and validates the QR payload (PLAN.md B9, PLAN-D.md §0.1 item 5):
-/// `{ kind, url, token, workspace, protocol_major }` plus the optional 1.1
-/// keys `workspace_id`, `machine`, `directory_url`, and `tls_ca` (VPS
-/// relay). A malformed optional key is ignored rather than rejected — a 1.0
-/// app never saw them either — except `tls_ca`, see below.
+/// `{ kind, url, token, workspace, protocol_major }`, the relay keys
+/// `tls_ca`, `relay_host`, `relay_secret` (all required — gaviero-relay is
+/// the only way to reach a machine), and the optional 1.1 keys
+/// `workspace_id`, `machine`, `directory_url`. A malformed optional key is
+/// ignored rather than rejected.
 PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
   final Object? decoded;
   try {
@@ -104,25 +104,29 @@ PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
   }
 
   final directoryUrl = optional('directory_url');
-  // Unlike the other optional keys, a malformed `tls_ca` is rejected: the
-  // machine can only be reached with that CA, so silently dropping it would
-  // fall back to system trust and fail later with a vaguer error.
+  // The relay keys are all-or-nothing: without the CA the end-to-end TLS
+  // through the relay can't be verified, and without the secret the
+  // notification stream can't be opened.
+  final relayHost = optional('relay_host');
+  final relaySecret = optional('relay_secret');
   final rawTlsCa = optional('tls_ca');
+  if (relayHost == null && relaySecret == null && rawTlsCa == null) {
+    throw const PairingError(
+        'This pairing code has no gaviero-relay. Set remote.relay.host and '
+        'remote.relay.secret on the desktop, restart gaviero, and run '
+        '/remote again.');
+  }
   final tlsCa = rawTlsCa == null ? null : normalizeTlsCa(rawTlsCa);
   if (rawTlsCa != null && tlsCa == null) {
     throw const PairingError(
         'The pairing code carries an invalid certificate. Run /remote again.');
   }
-  // A relay pairing is all-or-nothing: without the CA the end-to-end TLS
-  // through the relay can't be verified, and without the secret the
-  // notification stream can't be opened.
-  final relayHost = optional('relay_host');
-  final relaySecret = optional('relay_secret');
-  if (relayHost != null) {
-    if (!isValidRelayHost(relayHost) || relaySecret == null || tlsCa == null) {
-      throw const PairingError(
-          'The relay pairing code is incomplete. Run /remote again.');
-    }
+  if (relayHost == null ||
+      !isValidRelayHost(relayHost) ||
+      relaySecret == null ||
+      tlsCa == null) {
+    throw const PairingError(
+        'The relay pairing code is incomplete. Run /remote again.');
   }
   return PairingConfig(
     url: url,
@@ -136,40 +140,6 @@ PairingConfig parsePairingPayload(String raw, {required int expectedMajor}) {
             : null,
     tlsCa: tlsCa,
     relayHost: relayHost,
-    relaySecret: relayHost == null ? null : relaySecret,
+    relaySecret: relaySecret,
   );
-}
-
-final class PairingStore {
-  static const _urlKey = 'pairing_url';
-  static const _tokenKey = 'pairing_token';
-  static const _workspaceKey = 'pairing_workspace';
-
-  final FlutterSecureStorage _storage;
-
-  const PairingStore([this._storage = const FlutterSecureStorage()]);
-
-  Future<PairingConfig?> load() async {
-    final url = await _storage.read(key: _urlKey);
-    final token = await _storage.read(key: _tokenKey);
-    if (url == null || token == null) return null;
-    return PairingConfig(
-      url: url,
-      token: token,
-      workspace: await _storage.read(key: _workspaceKey) ?? '',
-    );
-  }
-
-  Future<void> save(PairingConfig config) async {
-    await _storage.write(key: _urlKey, value: config.url);
-    await _storage.write(key: _tokenKey, value: config.token);
-    await _storage.write(key: _workspaceKey, value: config.workspace);
-  }
-
-  /// Used on 4001 (`unauthorized`) and 4006 (`token_rotated`).
-  Future<void> clear() async {
-    await _storage.delete(key: _urlKey);
-    await _storage.delete(key: _tokenKey);
-    await _storage.delete(key: _workspaceKey);
-  }
 }

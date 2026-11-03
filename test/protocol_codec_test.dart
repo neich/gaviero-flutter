@@ -76,10 +76,10 @@ void main() {
       expect(hello.capabilities, containsAll(['latest_page', 'instances']));
       expect(hello.supportsLatestPage, isTrue);
       expect(hello.supportsInstances, isTrue);
-      expect(hello.machine?.host, 'host.tailnet.ts.net');
+      expect(hello.machine?.host, 'desk.gaviero.example.com');
       expect(
         hello.machine?.directoryUrl,
-        'https://host.tailnet.ts.net:49151/v1/instances',
+        'https://4b156f1de41da274-desk.gaviero.example.com/v1/instances',
       );
     });
 
@@ -144,7 +144,7 @@ void main() {
       final json = readFixture('http', 'instances');
       final directory = InstanceDirectory.fromJson(json);
       expect(directory.protocolVersion, const ProtocolVersion(1, 1));
-      expect(directory.host, 'host.tailnet.ts.net');
+      expect(directory.host, 'desk.gaviero.example.com');
       expect(directory.instances, hasLength(2));
       expect(directory.instances.map((i) => i.clientConnected), [false, true]);
       expect(directory.instances[1].workspace.displayName, 'gaviero-flutter');

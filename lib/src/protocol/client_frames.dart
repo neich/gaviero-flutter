@@ -340,10 +340,15 @@ final class TurnReviewAction extends ClientPayload {
   /// Required for `keep_file` / `revert_file`.
   final String? path;
 
+  /// 1.5, with [path]: the file's `TurnReviewFile.folder`, sent exactly when
+  /// the file carried one — the same path can exist in two folders.
+  final String? folder;
+
   const TurnReviewAction({
     required this.turnId,
     required this.action,
     this.path,
+    this.folder,
   });
 
   factory TurnReviewAction.fromJson(Map<String, Object?> json) =>
@@ -351,6 +356,7 @@ final class TurnReviewAction extends ClientPayload {
         turnId: json['turn_id'] as String,
         action: TurnReviewActionKind.fromWire(json['action'] as String),
         path: json['path'] as String?,
+        folder: json['folder'] as String?,
       );
 
   @override
@@ -360,6 +366,7 @@ final class TurnReviewAction extends ClientPayload {
   Map<String, Object?> toPayloadJson() {
     final map = <String, Object?>{'turn_id': turnId, 'action': action.wire};
     _put(map, 'path', path);
+    _put(map, 'folder', folder);
     return map;
   }
 }

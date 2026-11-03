@@ -1,5 +1,6 @@
 /// Machine + instance pairing document (Plan D §3.1). One JSON string under
-/// `instances_v2`. Legacy Plan B keys are migrated once, then deleted.
+/// `instances_v2`. Every machine is reached through gaviero-relay; a stored
+/// machine without relay data is dropped on load (it cannot be reached).
 library;
 
 import 'dart:convert';
@@ -7,9 +8,6 @@ import 'dart:convert';
 import 'kv.dart';
 
 const instancesV2Key = 'instances_v2';
-const legacyUrlKey = 'pairing_url';
-const legacyTokenKey = 'pairing_token';
-const legacyWorkspaceKey = 'pairing_workspace';
 
 final class MachineRecord {
   final String host;
@@ -20,16 +18,16 @@ final class MachineRecord {
   /// Token is dead (401 / 4001 / 4006); user must pair again.
   final bool needsPairing;
 
-  /// The machine's private CA (base64 DER) from the QR `tls_ca`, when it is
-  /// reached through a VPS relay. Null ⇒ default system trust.
-  final String? tlsCa;
+  /// The machine's private CA (base64 DER) from the QR `tls_ca`. Only this
+  /// CA is trusted for the machine.
+  final String tlsCa;
 
-  /// gaviero-relay: dial this host (`host[:port]`, default 443) for every
-  /// connection to the machine, naming the instance by SNI.
-  final String? relayHost;
+  /// Dial this host (`host[:port]`, default 443) for every connection to
+  /// the machine, naming the instance by SNI.
+  final String relayHost;
 
-  /// gaviero-relay: bearer secret for the relay's notification stream.
-  final String? relaySecret;
+  /// Bearer secret for the relay's notification stream.
+  final String relaySecret;
 
   const MachineRecord({
     required this.host,
@@ -37,9 +35,9 @@ final class MachineRecord {
     this.directoryUrl,
     required this.pairedAt,
     this.needsPairing = false,
-    this.tlsCa,
-    this.relayHost,
-    this.relaySecret,
+    required this.tlsCa,
+    required this.relayHost,
+    required this.relaySecret,
   });
 
   MachineRecord copyWith({
@@ -65,21 +63,29 @@ final class MachineRecord {
         if (directoryUrl != null) 'directory_url': directoryUrl,
         'paired_at': pairedAt,
         'needs_pairing': needsPairing,
-        if (tlsCa != null) 'tls_ca': tlsCa,
-        if (relayHost != null) 'relay_host': relayHost,
-        if (relaySecret != null) 'relay_secret': relaySecret,
+        'tls_ca': tlsCa,
+        'relay_host': relayHost,
+        'relay_secret': relaySecret,
       };
 
-  factory MachineRecord.fromJson(Map<String, Object?> json) => MachineRecord(
-        host: json['host'] as String,
-        token: json['token'] as String,
-        directoryUrl: json['directory_url'] as String?,
-        pairedAt: json['paired_at'] as String? ?? '',
-        needsPairing: json['needs_pairing'] as bool? ?? false,
-        tlsCa: json['tls_ca'] as String?,
-        relayHost: json['relay_host'] as String?,
-        relaySecret: json['relay_secret'] as String?,
-      );
+  /// Null for a record without relay data — it cannot be reached.
+  static MachineRecord? tryFromJson(Map<String, Object?> json) {
+    final tlsCa = json['tls_ca'], relayHost = json['relay_host'];
+    final relaySecret = json['relay_secret'];
+    if (tlsCa is! String || relayHost is! String || relaySecret is! String) {
+      return null;
+    }
+    return MachineRecord(
+      host: json['host'] as String,
+      token: json['token'] as String,
+      directoryUrl: json['directory_url'] as String?,
+      pairedAt: json['paired_at'] as String? ?? '',
+      needsPairing: json['needs_pairing'] as bool? ?? false,
+      tlsCa: tlsCa,
+      relayHost: relayHost,
+      relaySecret: relaySecret,
+    );
+  }
 }
 
 final class InstanceRecord {
@@ -106,8 +112,6 @@ final class InstanceRecord {
   });
 
   InstanceKey get key => InstanceKey(machineHost, workspaceId);
-
-  int get port => Uri.tryParse(url)?.port ?? 0;
 
   InstanceRecord copyWith({
     String? workspaceId,
@@ -216,17 +220,22 @@ final class StoreDocument {
         lastMap['workspace_id'] as String?,
       );
     }
+    final machines = [
+      for (final m in json['machines'] as List? ?? const [])
+        ?MachineRecord.tryFromJson(Map<String, Object?>.from(m as Map))
+    ];
+    final hosts = {for (final m in machines) m.host};
     return StoreDocument(
       v: json['v'] as int? ?? 2,
-      machines: [
-        for (final m in json['machines'] as List? ?? const [])
-          MachineRecord.fromJson(Map<String, Object?>.from(m as Map))
-      ],
+      machines: machines,
       instances: [
         for (final i in json['instances'] as List? ?? const [])
-          InstanceRecord.fromJson(Map<String, Object?>.from(i as Map))
+          if (InstanceRecord.fromJson(Map<String, Object?>.from(i as Map))
+              case final inst when hosts.contains(inst.machineHost))
+            inst
       ],
-      lastInstance: last,
+      lastInstance:
+          last != null && hosts.contains(last.machineHost) ? last : null,
     );
   }
 }
@@ -247,44 +256,6 @@ final class InstanceStore {
         doc = const StoreDocument();
       }
     }
-    await _migrateLegacy();
-  }
-
-  Future<void> _migrateLegacy() async {
-    final url = await kv.read(legacyUrlKey);
-    final token = await kv.read(legacyTokenKey);
-    if (url == null || token == null) return;
-    if (doc.machines.isNotEmpty || doc.instances.isNotEmpty) {
-      await _deleteLegacy();
-      return;
-    }
-    final host = Uri.tryParse(url)?.host ?? url;
-    final workspace = await kv.read(legacyWorkspaceKey) ?? '';
-    doc = StoreDocument(
-      machines: [
-        MachineRecord(
-          host: host,
-          token: token,
-          pairedAt: DateTime.now().toUtc().toIso8601String(),
-        )
-      ],
-      instances: [
-        InstanceRecord(
-          machineHost: host,
-          displayName: workspace.isEmpty ? host : workspace,
-          url: url,
-        )
-      ],
-      lastInstance: InstanceKey(host, null),
-    );
-    await persist();
-    await _deleteLegacy();
-  }
-
-  Future<void> _deleteLegacy() async {
-    await kv.delete(legacyUrlKey);
-    await kv.delete(legacyTokenKey);
-    await kv.delete(legacyWorkspaceKey);
   }
 
   Future<void> persist() async {

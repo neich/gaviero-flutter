@@ -62,8 +62,9 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     _notifications.context.machineHost = current?.machineHost;
     _notifications.context.workspaceId = current?.workspaceId;
     _notifications.context.workspaceName = current?.displayName;
-    _notifications.context.relayCovered = current != null &&
-        _controller.instanceStore.machine(current.machineHost)?.relayHost != null;
+    // Every machine is paired through gaviero-relay, whose alert service
+    // already covers finished/waiting turns.
+    _notifications.context.relayCovered = current != null;
     _notifications.context.conversationTitle = (convId) =>
         _controller.state.conversation(convId)?.summary.title ?? convId;
   }
