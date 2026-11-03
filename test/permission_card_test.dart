@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gaviero_remote/src/protocol/protocol.dart';
 import 'package:gaviero_remote/src/state/app_state.dart';
@@ -198,7 +199,7 @@ void main() {
       ),
     ));
 
-    final grant = find.text('Allow all flutter calls for this prompt');
+    final grant = find.text('All flutter tools (this prompt)');
     expect(grant, findsOneWidget);
     await tester.tap(grant);
     await tester.pump();
@@ -221,7 +222,141 @@ void main() {
         ),
       ),
     ));
-    expect(find.textContaining('for this prompt'), findsNothing);
+    expect(find.textContaining('this prompt'), findsNothing);
     expect(find.widgetWithText(FilledButton, 'Allow'), findsOneWidget);
+  });
+
+  // 1.6 `permission_grants`: the card offers exactly the listed grants, in
+  // the desktop overlay's order, each labelled with its desktop key.
+  const grantedMcp = PermissionRequest(
+    convId: 'c1',
+    requestId: 'req-4',
+    toolName: 'mcp__flutter__hot_reload',
+    description: 'Hot reload the app',
+    input: <String, Object?>{},
+    mcpServer: 'flutter',
+    grants: [
+      PermissionGrant.toolSession,
+      PermissionGrant.mcpServerSession,
+      PermissionGrant.mcpServerTurn,
+      PermissionGrant.turnAll,
+    ],
+  );
+
+  Future<CapturingSocket> pumpCard(
+    WidgetTester tester,
+    PermissionRequest request, {
+    List<String> capabilities = const [
+      Capability.permissionTurnGrant,
+      Capability.permissionGrants,
+    ],
+  }) async {
+    final (controller, socket) = (await tester.runAsync(
+        () => connectedController(capabilities: capabilities)))!;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: PermissionCard(controller: controller, request: request),
+        ),
+      ),
+    ));
+    return socket;
+  }
+
+  Map<String, Object?> lastDecision(CapturingSocket socket) =>
+      socket.sent.lastWhere((f) => f['type'] == 'permission_decision')[
+          'payload'] as Map<String, Object?>;
+
+  testWidgets('every listed grant is offered, in desktop order',
+      (tester) async {
+    await pumpCard(tester, grantedMcp);
+    final labels = [
+      'Allow for session',
+      'All flutter tools',
+      'All flutter tools (this prompt)',
+      'Allow all (this prompt)',
+    ];
+    final tops = [
+      for (final label in labels) tester.getTopLeft(find.text(label)).dy
+    ];
+    expect(tops, orderedEquals([...tops]..sort()));
+    // Desktop key badges: y / n on Allow / Deny, a / A / p on the grants.
+    for (final key in ['y', 'n', 'a', 'A', 'p']) {
+      expect(find.text(key), findsOneWidget, reason: key);
+    }
+  });
+
+  for (final (label, wire) in [
+    ('Allow for session', 'tool_session'),
+    ('All flutter tools', 'mcp_server_session'),
+    ('All flutter tools (this prompt)', 'mcp_server_turn'),
+    ('Allow all (this prompt)', 'turn_all'),
+  ]) {
+    testWidgets('"$label" sends grant $wire', (tester) async {
+      final socket = await pumpCard(tester, grantedMcp);
+      await tester.ensureVisible(find.text(label));
+      await tester.tap(find.text(label));
+      await tester.pump();
+      final payload = lastDecision(socket);
+      expect(payload['request_id'], 'req-4');
+      expect(payload['allow'], isTrue);
+      expect(payload['grant'], wire);
+      expect(payload.containsKey('answers'), isFalse);
+    });
+  }
+
+  testWidgets('a shell request offers allow-all only', (tester) async {
+    const bash = PermissionRequest(
+      convId: 'c1',
+      requestId: 'req-5',
+      toolName: 'Bash',
+      description: 'Run: cargo test',
+      input: {'command': 'cargo test'},
+      grants: [PermissionGrant.turnAll],
+    );
+    final socket = await pumpCard(tester, bash);
+    expect(find.text('Allow for session'), findsNothing);
+    expect(find.text('Allow all (this prompt)'), findsOneWidget);
+    await tester.tap(find.text('Allow all (this prompt)'));
+    await tester.pump();
+    expect(lastDecision(socket)['grant'], 'turn_all');
+  });
+
+  testWidgets('without the 1.6 capability, grants are not offered',
+      (tester) async {
+    await pumpCard(tester, grantedMcp,
+        capabilities: const [Capability.permissionTurnGrant]);
+    expect(find.text('Allow all (this prompt)'), findsNothing);
+    expect(find.text('Allow for session'), findsNothing);
+    // 1.4 fallback from mcp_server.
+    expect(find.text('All flutter tools (this prompt)'), findsOneWidget);
+  });
+
+  testWidgets('hardware keys answer as on the desktop', (tester) async {
+    final socket = await pumpCard(tester, grantedMcp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+    await tester.pump();
+    expect(lastDecision(socket)['grant'], 'turn_all');
+  });
+
+  testWidgets('an unoffered key does nothing', (tester) async {
+    const bash = PermissionRequest(
+      convId: 'c1',
+      requestId: 'req-6',
+      toolName: 'Bash',
+      description: 'Run: ls',
+      input: {'command': 'ls'},
+      grants: [PermissionGrant.turnAll],
+    );
+    final socket = await pumpCard(tester, bash);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    await tester.pump();
+    expect(socket.sent.where((f) => f['type'] == 'permission_decision'),
+        isEmpty);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyY);
+    await tester.pump();
+    final payload = lastDecision(socket);
+    expect(payload['allow'], isTrue);
+    expect(payload.containsKey('grant'), isFalse);
   });
 }

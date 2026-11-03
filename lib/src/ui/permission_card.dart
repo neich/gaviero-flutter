@@ -4,11 +4,17 @@
 /// reconstructs the input itself. A request answered on the desktop first
 /// (`permission_closed` / `stale_request`) dismisses without an error —
 /// losing that race is normal.
+///
+/// A plain request offers every answer the desktop overlay does, labelled
+/// with its key: `y` Allow, `n` Deny, `a` Allow for session, `A` all tools of
+/// the MCP server, `p` Allow all until the next prompt (protocol 1.6
+/// `grants`); those keys also work from a hardware keyboard.
 library;
 
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../protocol/protocol.dart';
 import '../state/controller.dart';
@@ -34,12 +40,6 @@ class _PermissionCardState extends State<PermissionCard> {
   bool _sending = false;
   bool _showDenyNote = false;
   final _denyNote = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    _initSelections();
-  }
 
   @override
   void didUpdateWidget(PermissionCard old) {
@@ -72,12 +72,90 @@ class _PermissionCardState extends State<PermissionCard> {
     return true;
   }
 
-  /// MCP server the "allow for this prompt" option names, or `null` when
-  /// the option is unavailable (question, non-MCP tool, or older server).
-  String? get _turnGrantServer =>
-      _ask == null && widget.controller.supportsPermissionTurnGrant
-          ? widget.request.mcpServer
-          : null;
+  /// Standing answers offered beside Allow / Deny, in the desktop overlay's
+  /// order. A 1.6 server lists them per request (`grants`) and the card shows
+  /// exactly those; a 1.4/1.5 server only knows `mcp_server_turn`, offered
+  /// when the request names its `mcp_server`. Never on a question.
+  List<PermissionGrant> get _grants {
+    if (_ask != null) return const [];
+    final controller = widget.controller;
+    if (controller.supportsPermissionGrants) return widget.request.grants;
+    if (controller.supportsPermissionTurnGrant &&
+        widget.request.mcpServer != null) {
+      return const [PermissionGrant.mcpServerTurn];
+    }
+    return const [];
+  }
+
+  /// MCP server named by the server-wide grants: the request's `mcp_server`,
+  /// else the `<server>` of an `mcp__<server>__<tool>` name.
+  String get _server {
+    if (widget.request.mcpServer case final server?) return server;
+    final parts = widget.request.toolName.split('__');
+    return parts.length >= 3 && parts.first == 'mcp' ? parts[1] : 'MCP';
+  }
+
+  /// Hardware keyboard: the desktop overlay's keys (y / n / a / A / p) work
+  /// while no text field has focus. Unoffered keys do nothing, as there.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || _sending || _ask != null) return false;
+    final focused = FocusManager.instance.primaryFocus?.context?.widget;
+    if (focused is EditableText) return false;
+    final grants = _grants;
+    switch (event.character) {
+      case 'y' || 'Y':
+        _decide(true);
+      case 'n' || 'N':
+        _decide(false);
+      case final key? when _grantFor(key, grants) != null:
+        _decide(true, grant: _grantFor(key, grants));
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  static PermissionGrant? _grantFor(String key, List<PermissionGrant> offered) {
+    for (final grant in offered) {
+      if (_grantKey(grant) == key) return grant;
+    }
+    return null;
+  }
+
+  /// The desktop key for [grant]; `mcp_server_turn` has none there.
+  static String? _grantKey(PermissionGrant grant) => switch (grant) {
+        PermissionGrant.toolSession => 'a',
+        PermissionGrant.mcpServerSession => 'A',
+        PermissionGrant.mcpServerTurn => null,
+        PermissionGrant.turnAll => 'p',
+      };
+
+  (String, String) _grantText(PermissionGrant grant) => switch (grant) {
+        PermissionGrant.toolSession => (
+            'Allow for session',
+            '${widget.request.toolName} stops asking in this conversation',
+          ),
+        PermissionGrant.mcpServerSession => (
+            'All $_server tools',
+            'Every $_server tool stops asking in this conversation',
+          ),
+        PermissionGrant.mcpServerTurn => (
+            'All $_server tools (this prompt)',
+            'Every $_server tool, until your next prompt',
+          ),
+        PermissionGrant.turnAll => (
+            'Allow all (this prompt)',
+            'Every request until your next prompt — shell commands '
+                'included; questions and network asks still ask',
+          ),
+      };
+
+  @override
+  void initState() {
+    super.initState();
+    _initSelections();
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
 
   Future<void> _decide(bool allow, {PermissionGrant? grant}) async {
     setState(() => _sending = true);
@@ -153,18 +231,16 @@ class _PermissionCardState extends State<PermissionCard> {
                     ),
                   ),
                 ),
-              if (_turnGrantServer case final server?) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _sending
-                        ? null
-                        : () => _decide(true,
-                            grant: PermissionGrant.mcpServerTurn),
-                    icon: const Icon(Icons.done_all, size: 18),
-                    label: Text('Allow all $server calls for this prompt'),
-                  ),
+              // The desktop overlay's standing answers, in its order.
+              for (final grant in _grants) ...[
+                const SizedBox(height: 8),
+                _GrantButton(
+                  key: ValueKey('grant-${grant.wire}'),
+                  keyLabel: _grantKey(grant),
+                  title: _grantText(grant).$1,
+                  subtitle: _grantText(grant).$2,
+                  onPressed:
+                      _sending ? null : () => _decide(true, grant: grant),
                 ),
               ],
               const SizedBox(height: 10),
@@ -180,7 +256,10 @@ class _PermissionCardState extends State<PermissionCard> {
                               setState(() => _showDenyNote = true);
                             }
                           },
-                    child: Text(_showDenyNote ? 'Deny' : 'Deny…'),
+                    child: _Keyed(
+                      keyLabel: 'n',
+                      text: _showDenyNote ? 'Deny' : 'Deny…',
+                    ),
                   ),
                   if (_showDenyNote)
                     TextButton(
@@ -193,7 +272,9 @@ class _PermissionCardState extends State<PermissionCard> {
                     onPressed: _sending || !_answersComplete
                         ? null
                         : () => _decide(true),
-                    child: Text(_ask == null ? 'Allow' : 'Answer'),
+                    child: _ask == null
+                        ? const _Keyed(keyLabel: 'y', text: 'Allow')
+                        : const Text('Answer'),
                   ),
                 ],
               ),
@@ -206,8 +287,106 @@ class _PermissionCardState extends State<PermissionCard> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _denyNote.dispose();
     super.dispose();
+  }
+}
+
+/// A desktop key shown as a small badge, as the TUI's `[p]` hints.
+class _KeyBadge extends StatelessWidget {
+  final String label;
+
+  const _KeyBadge(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final color = DefaultTextStyle.of(context).style.color ?? Colors.white70;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        border: Border.all(color: color.withValues(alpha: 0.6)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontFamily: codeFontFamily, fontSize: 11),
+      ),
+    );
+  }
+}
+
+/// Button content: the desktop key badge, then [text].
+class _Keyed extends StatelessWidget {
+  final String keyLabel;
+  final String text;
+
+  const _Keyed({required this.keyLabel, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _KeyBadge(keyLabel),
+        const SizedBox(width: 6),
+        Text(text),
+      ],
+    );
+  }
+}
+
+/// One standing answer: full-width, key badge, title and what it covers.
+class _GrantButton extends StatelessWidget {
+  final String? keyLabel;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onPressed;
+
+  const _GrantButton({
+    super.key,
+    required this.keyLabel,
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+        child: Row(
+          children: [
+            if (keyLabel case final key?)
+              _KeyBadge(key)
+            else
+              const Icon(Icons.done_all, size: 16),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.white54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
