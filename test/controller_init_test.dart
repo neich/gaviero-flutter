@@ -1,91 +1,18 @@
-/// Launch reconnect must refresh the directory before using a stored URL,
-/// so a TUI that fell forward one port is followed.
+/// Directory refresh before reconnecting, and notification targets.
 library;
 
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gaviero_remote/src/protocol/version.dart';
 import 'package:gaviero_remote/src/services/directory_client.dart';
 import 'package:gaviero_remote/src/services/instance_store.dart';
 import 'package:gaviero_remote/src/services/kv.dart';
 import 'package:gaviero_remote/src/state/controller.dart';
 import 'package:gaviero_remote/src/transport/connection.dart';
 
+import 'support/relay_machine.dart';
+
 void main() {
-  test('initialize follows a stored instance that moved port', () async {
-    final kv = MemoryKv();
-    final store = InstanceStore(kv: kv);
-    store.doc = StoreDocument(
-      machines: const [
-        MachineRecord(
-          host: 'neichtop.tail.net',
-          token: 't',
-          directoryUrl: 'https://neichtop.tail.net:49151/v1/instances',
-          pairedAt: 'x',
-        ),
-      ],
-      instances: const [
-        InstanceRecord(
-          machineHost: 'neichtop.tail.net',
-          workspaceId: '0b7d245998c0e8c3',
-          displayName: 'gaviero',
-          url: 'wss://neichtop.tail.net:52093/v1/ws',
-        ),
-      ],
-      lastInstance: const InstanceKey('neichtop.tail.net', '0b7d245998c0e8c3'),
-    );
-    await store.persist();
-
-    final connected = <Uri>[];
-    final controller = RemoteController(
-      instanceStore: store,
-      directoryClient: DirectoryClient(
-        fetch: (url, token) async {
-          expect(url.port, defaultDirectoryPort);
-          return DirectoryFetchResult(
-            200,
-            jsonEncode({
-              'protocol_version': {'major': 1, 'minor': 1},
-              'host': 'neichtop.tail.net',
-              'generated_at': '2026-09-09T15:31:04Z',
-              'instances': [
-                {
-                  'instance_id': 'live',
-                  'workspace': {
-                    'id': '0b7d245998c0e8c3',
-                    'display_name': 'gaviero',
-                  },
-                  'url': 'wss://neichtop.tail.net:52094/v1/ws',
-                  'port': 52094,
-                  'tui_version': '0.1.0',
-                  'started_at': '2026-09-09T15:31:04Z',
-                  'client_connected': false,
-                },
-              ],
-            }),
-          );
-        },
-      ),
-      connection: RemoteConnection(
-        connector: (url, token) async {
-          connected.add(url);
-          throw StateError('offline');
-        },
-      ),
-    );
-
-    expect(await controller.initialize(), isTrue);
-    expect(connected, [Uri.parse('wss://neichtop.tail.net:52094/v1/ws')]);
-    expect(
-      store
-          .instance(const InstanceKey('neichtop.tail.net', '0b7d245998c0e8c3'))!
-          .url,
-      'wss://neichtop.tail.net:52094/v1/ws',
-    );
-    await controller.connection.stop();
-  });
-
   test(
     'onAppResumed reconnects when the directory reports a new url',
     () async {
@@ -95,8 +22,11 @@ void main() {
           MachineRecord(
             host: 'alpha',
             token: 't',
-            directoryUrl: 'https://alpha:49151/v1/instances',
+            directoryUrl: 'https://ws-alpha/v1/instances',
             pairedAt: 'x',
+            tlsCa: testTlsCa,
+            relayHost: testRelayHost,
+            relaySecret: testRelaySecret,
           ),
         ],
         instances: const [
@@ -104,7 +34,7 @@ void main() {
             machineHost: 'alpha',
             workspaceId: 'ws',
             displayName: 'gaviero',
-            url: 'wss://alpha:1/v1/ws',
+            url: 'wss://ws1-alpha/v1/ws',
           ),
         ],
       );
@@ -125,7 +55,7 @@ void main() {
                   {
                     'instance_id': 'i',
                     'workspace': {'id': 'ws', 'display_name': 'gaviero'},
-                    'url': 'wss://alpha:2/v1/ws',
+                    'url': 'wss://ws2-alpha/v1/ws',
                     'port': 2,
                     'tui_version': '0.1.0',
                     'started_at': '2026-09-09T15:31:04Z',
@@ -148,7 +78,7 @@ void main() {
       connected.clear();
       await controller.onAppResumed();
       expect(fetches, 1);
-      expect(connected, [Uri.parse('wss://alpha:2/v1/ws')]);
+      expect(connected, [Uri.parse('wss://ws2-alpha/v1/ws')]);
       await controller.connection.stop();
     },
   );
@@ -161,8 +91,11 @@ void main() {
         MachineRecord(
           host: 'alpha',
           token: 't',
-          directoryUrl: 'https://alpha:49151/v1/instances',
+          directoryUrl: 'https://ws-alpha/v1/instances',
           pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
         ),
       ],
       instances: const [
@@ -170,7 +103,7 @@ void main() {
           machineHost: 'alpha',
           workspaceId: 'ws',
           displayName: 'gaviero',
-          url: 'wss://alpha:1/v1/ws',
+          url: 'wss://ws1-alpha/v1/ws',
         ),
       ],
     );
@@ -189,7 +122,7 @@ void main() {
     await controller.connection.stop();
     expect(controller.current, isNotNull);
     await controller.openNotificationTarget(
-      machineHost: 'other.tail.net',
+      machineHost: 'other.gaviero.example.com',
       workspaceId: 'nope',
       convId: 'c1',
     );

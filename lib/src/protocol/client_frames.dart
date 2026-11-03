@@ -341,8 +341,8 @@ final class TurnReviewAction extends ClientPayload {
   /// Required for `keep_file` / `revert_file`.
   final String? path;
 
-  /// 1.5: with [path], the file's `TurnReviewFile.folder` — sent exactly when
-  /// the file carried one, so the same path in two folders names one file.
+  /// 1.5, with [path]: the file's `TurnReviewFile.folder`, sent exactly when
+  /// the file carried one — the same path can exist in two folders.
   final String? folder;
 
   const TurnReviewAction({

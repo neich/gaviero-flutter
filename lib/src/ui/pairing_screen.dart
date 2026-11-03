@@ -1,5 +1,6 @@
-/// Pairing (manual-entry form + QR). Host + token go into the instance
-/// store; the token is never echoed back on screen after saving.
+/// Pairing (QR + a manual token-replacement form). The QR carries the relay
+/// fields and the machine CA; manual entry can only replace the token of a
+/// machine already paired by QR. The token is never echoed back on screen.
 library;
 
 import 'package:flutter/material.dart';
@@ -24,8 +25,6 @@ class PairingScreen extends StatefulWidget {
 class PairingScreenState extends State<PairingScreen> {
   late final TextEditingController _host;
   final _token = TextEditingController();
-  final _instancePort = TextEditingController();
-  final _directoryPort = TextEditingController();
   String? _error;
   bool _busy = false;
 
@@ -61,32 +60,17 @@ class PairingScreenState extends State<PairingScreen> {
       setState(() => _error = 'Enter the host and token shown by /remote.');
       return;
     }
-    final instancePort = int.tryParse(_instancePort.text.trim());
-    final directoryPort =
-        int.tryParse(_directoryPort.text.trim()) ?? defaultDirectoryPort;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      if (instancePort == null) {
-        await widget.controller.pairMachineOnly(
-          host,
-          token,
-          directoryPort: directoryPort,
-        );
-      } else {
-        await widget.controller.pair(PairingConfig(
-          url: 'wss://$host:$instancePort$wsPath',
-          token: token,
-          workspace: '',
-          machine: host,
-          directoryUrl: 'https://$host:$directoryPort$instancesPath',
-        ));
-      }
+      await widget.controller.pairMachineOnly(host, token);
       if (mounted && Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
       }
+    } on PairingError catch (e) {
+      setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -106,8 +90,7 @@ class PairingScreenState extends State<PairingScreen> {
         children: [
           Text(
             rePair == null
-                ? 'Run /remote in the gaviero TUI and scan the QR code, or '
-                    'enter the connection details manually.'
+                ? 'Run /remote in the gaviero TUI and scan the QR code.'
                 : 'The token for $rePair is no longer valid. Scan the QR '
                     'from /remote on that machine.',
             style: Theme.of(context).textTheme.bodyMedium,
@@ -115,14 +98,14 @@ class PairingScreenState extends State<PairingScreen> {
           const SizedBox(height: 16),
           buildScannerSection(context),
           const SizedBox(height: 24),
-          Text('Manual entry',
+          Text('Replace the token of a paired machine',
               style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           TextField(
             controller: _host,
             decoration: const InputDecoration(
-              labelText: 'Host',
-              hintText: 'host.tailnet.ts.net',
+              labelText: 'Machine',
+              hintText: 'desk.gaviero.example.com',
               border: OutlineInputBorder(),
             ),
           ),
@@ -133,26 +116,6 @@ class PairingScreenState extends State<PairingScreen> {
             decoration: const InputDecoration(
               labelText: 'Token',
               border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _instancePort,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Instance port (optional)',
-              hintText: 'shown by /remote',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _directoryPort,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: 'Directory port (optional)',
-              hintText: '$defaultDirectoryPort',
-              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 16),
@@ -190,8 +153,6 @@ class PairingScreenState extends State<PairingScreen> {
   void dispose() {
     _host.dispose();
     _token.dispose();
-    _instancePort.dispose();
-    _directoryPort.dispose();
     super.dispose();
   }
 }

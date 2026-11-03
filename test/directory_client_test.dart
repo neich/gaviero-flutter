@@ -1,4 +1,6 @@
 /// D2: DirectoryClient.refresh — union, offline leftover, 404/401, timeout.
+/// Machines are reached through gaviero-relay: every URL is a route
+/// (`<id>-<machine>`), never a host:port.
 library;
 
 import 'dart:convert';
@@ -8,7 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gaviero_remote/src/services/directory_client.dart';
 import 'package:gaviero_remote/src/services/instance_store.dart';
 import 'package:gaviero_remote/src/services/kv.dart';
-import 'package:gaviero_remote/src/protocol/version.dart';
+
+import 'support/relay_machine.dart';
 
 String _dirBody({
   required String host,
@@ -54,8 +57,11 @@ void main() {
         const MachineRecord(
           host: 'alpha',
           token: 't',
-          directoryUrl: 'https://alpha:49151/v1/instances',
+          directoryUrl: 'https://dir-alpha/v1/instances',
           pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
         ),
       ],
       const [
@@ -63,13 +69,13 @@ void main() {
           machineHost: 'alpha',
           workspaceId: 'old',
           displayName: 'old-ws',
-          url: 'wss://alpha:1/v1/ws',
+          url: 'wss://1-alpha/v1/ws',
         ),
       ],
     );
     final client = DirectoryClient(
       fetch: (url, token) async {
-        if (url.port == defaultDirectoryPort) {
+        if (url.host == 'dir-alpha') {
           return DirectoryFetchResult(
             200,
             _dirBody(
@@ -79,7 +85,7 @@ void main() {
                   id: 'a',
                   workspaceId: 'new',
                   name: 'new-ws',
-                  url: 'wss://alpha:2/v1/ws',
+                  url: 'wss://2-alpha/v1/ws',
                   port: 2,
                 ),
               ],
@@ -110,8 +116,11 @@ void main() {
         const MachineRecord(
           host: 'alpha',
           token: 't',
-          directoryUrl: 'https://alpha:49151/v1/instances',
+          directoryUrl: 'https://dir-alpha/v1/instances',
           pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
         ),
       ],
       const [
@@ -119,14 +128,14 @@ void main() {
           machineHost: 'alpha',
           workspaceId: 'gone',
           displayName: 'gone',
-          url: 'wss://alpha:9/v1/ws',
+          url: 'wss://9-alpha/v1/ws',
           lastOnline: true,
         ),
       ],
     );
     final client = DirectoryClient(
       fetch: (url, token) async {
-        if (url.port == defaultDirectoryPort) {
+        if (url.host == 'dir-alpha') {
           return DirectoryFetchResult(
             200,
             _dirBody(host: 'alpha', instances: []),
@@ -144,13 +153,22 @@ void main() {
 
   test('404 marks the probed instance unknown, still connectable', () async {
     final store = _storeWith(
-      [const MachineRecord(host: 'legacy', token: 't', pairedAt: 'x')],
+      [
+        const MachineRecord(
+          host: 'legacy',
+          token: 't',
+          pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
+        ),
+      ],
       const [
         InstanceRecord(
           machineHost: 'legacy',
           workspaceId: 'ws',
           displayName: 'one-oh',
-          url: 'wss://legacy:4443/v1/ws',
+          url: 'wss://ws-legacy/v1/ws',
         ),
       ],
     );
@@ -169,8 +187,11 @@ void main() {
         const MachineRecord(
           host: 'alpha',
           token: 'dead',
-          directoryUrl: 'https://alpha:49151/v1/instances',
+          directoryUrl: 'https://dir-alpha/v1/instances',
           pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
         ),
       ],
       const [
@@ -178,7 +199,7 @@ void main() {
           machineHost: 'alpha',
           workspaceId: 'ws',
           displayName: 'keep-me',
-          url: 'wss://alpha:1/v1/ws',
+          url: 'wss://1-alpha/v1/ws',
         ),
       ],
     );
@@ -200,8 +221,11 @@ void main() {
       const MachineRecord(
         host: 'alpha',
         token: 't',
-        directoryUrl: 'https://alpha:49151/v1/instances',
+        directoryUrl: 'https://dir-alpha/v1/instances',
         pairedAt: 'x',
+        tlsCa: testTlsCa,
+        relayHost: testRelayHost,
+        relaySecret: testRelaySecret,
       ),
     ]);
     final client = DirectoryClient(
@@ -215,7 +239,7 @@ void main() {
                 id: 'old',
                 workspaceId: 'ws',
                 name: 'gaviero',
-                url: 'wss://alpha:52093/v1/ws',
+                url: 'wss://old-ws-alpha/v1/ws',
                 port: 52093,
                 startedAt: '2026-09-09T15:00:00Z',
               ),
@@ -223,7 +247,7 @@ void main() {
                 id: 'new',
                 workspaceId: 'ws',
                 name: 'gaviero',
-                url: 'wss://alpha:52094/v1/ws',
+                url: 'wss://new-ws-alpha/v1/ws',
                 port: 52094,
                 startedAt: '2026-09-09T15:31:04Z',
               ),
@@ -234,52 +258,8 @@ void main() {
     );
     await client.refresh(store);
     final inst = store.instance(const InstanceKey('alpha', 'ws'))!;
-    expect(inst.url, 'wss://alpha:52094/v1/ws');
+    expect(inst.url, 'wss://new-ws-alpha/v1/ws');
     expect(store.doc.instances, hasLength(1));
-  });
-
-  test('port window finds the instance when the stored port is dead', () async {
-    final store = _storeWith(
-      [const MachineRecord(host: 'alpha', token: 't', pairedAt: 'x')],
-      const [
-        InstanceRecord(
-          machineHost: 'alpha',
-          workspaceId: 'ws',
-          displayName: 'gaviero',
-          url: 'wss://alpha:52093/v1/ws',
-        ),
-      ],
-    );
-    final client = DirectoryClient(
-      fetch: (url, token) async {
-        if (url.port == 52093) {
-          throw Exception('connection refused');
-        }
-        if (url.port == 52094) {
-          return DirectoryFetchResult(
-            200,
-            _dirBody(
-              host: 'alpha',
-              instances: [
-                _info(
-                  id: 'live',
-                  workspaceId: 'ws',
-                  name: 'gaviero',
-                  url: 'wss://alpha:52094/v1/ws',
-                  port: 52094,
-                ),
-              ],
-            ),
-          );
-        }
-        return const DirectoryFetchResult(404, '');
-      },
-    );
-    await client.refresh(store);
-    final inst = store.instance(const InstanceKey('alpha', 'ws'))!;
-    expect(inst.url, 'wss://alpha:52094/v1/ws');
-    expect(inst.lastOnline, isTrue);
-    expect(inst.lastUnknown, isFalse);
   });
 
   test('a 3s timeout on one machine does not delay another', () {
@@ -288,14 +268,20 @@ void main() {
         const MachineRecord(
           host: 'slow',
           token: 't',
-          directoryUrl: 'https://slow:49151/v1/instances',
+          directoryUrl: 'https://slow/v1/instances',
           pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
         ),
         const MachineRecord(
           host: 'fast',
           token: 't',
-          directoryUrl: 'https://fast:49151/v1/instances',
+          directoryUrl: 'https://fast/v1/instances',
           pairedAt: 'x',
+          tlsCa: testTlsCa,
+          relayHost: testRelayHost,
+          relaySecret: testRelaySecret,
         ),
       ]);
       var fastDone = false;
@@ -315,7 +301,7 @@ void main() {
                   id: 'f',
                   workspaceId: 'fw',
                   name: 'fast-ws',
-                  url: 'wss://fast:1/v1/ws',
+                  url: 'wss://fw-fast/v1/ws',
                   port: 1,
                 ),
               ],

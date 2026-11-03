@@ -26,21 +26,20 @@ final class IoWsSocket implements WsSocket {
 
   IoWsSocket._(this._channel);
 
-  /// [tlsCa] (base64 DER) pins the machine's private CA — the VPS-relay
-  /// pairing; null keeps system trust.
+  /// Dials [relayHost] and pins the machine's private CA [tlsCa] (base64
+  /// DER) from the pairing QR.
   static Future<WsSocket> connect(
     Uri url,
     String bearerToken, {
-    String? tlsCa,
-    String? relayHost,
+    required String tlsCa,
+    required String relayHost,
   }) async {
     final channel = IOWebSocketChannel.connect(
       url,
       protocols: const [wsSubprotocol],
       headers: {'Authorization': 'Bearer $bearerToken'},
       connectTimeout: const Duration(seconds: 15),
-      customClient:
-          tlsCa == null ? null : httpClientFor(tlsCa, relayHost: relayHost),
+      customClient: httpClientFor(tlsCa, relayHost: relayHost),
     );
     await channel.ready;
     return IoWsSocket._(channel);

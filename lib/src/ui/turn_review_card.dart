@@ -4,7 +4,9 @@
 /// desktop: Accept / Reject one file, Accept all / Reject all for the files
 /// still pending. Reject goes back to the pre-prompt version. Decisions are
 /// final; a repeat is harmless, and a review the desktop finished first
-/// (`unknown_turn_review`) is a calm, benign race.
+/// (`unknown_turn_review`) is a calm, benign race. Files are grouped under a
+/// header per workspace folder (1.5 `folder`); an action names its file by
+/// `(folder, path)`, since two folders can change the same path.
 library;
 
 import 'package:flutter/material.dart';
@@ -112,30 +114,10 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
                   text: warning,
                 ),
               const SizedBox(height: 6),
-              // 1.5: a header per workspace folder, in order of first
-              // appearance, as the desktop list; older servers list flat.
-              for (final (folder, files) in _groupByFolder(review.files)) ...[
-                if (folder != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6, bottom: 2),
-                    child: Row(
-                      children: [
-                        Icon(Icons.folder_outlined,
-                            size: 14, color: scheme.secondary),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            folder,
-                            key: ValueKey('turn-review-folder-$folder'),
-                            style: textTheme.labelMedium
-                                ?.copyWith(color: scheme.secondary),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                for (final file in files)
+              for (final group in groupByFolder(review.files)) ...[
+                if (group.folder case final folder?)
+                  _FolderHeader(folder: folder, files: group.files),
+                for (final file in group.files)
                   _FileRow(
                     file: file,
                     sending: _sending,
@@ -176,15 +158,59 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
   }
 }
 
-/// Files grouped by [TurnReviewFile.folder] in order of first appearance;
-/// files without one (pre-1.5 servers) share a `null` group, drawn flat.
-List<(String?, List<TurnReviewFile>)> _groupByFolder(
-    List<TurnReviewFile> files) {
+/// The files of one workspace folder. [folder] is `null` for files from a
+/// server older than 1.5, which are listed without a header.
+typedef FolderGroup = ({String? folder, List<TurnReviewFile> files});
+
+/// Files grouped by `TurnReviewFile.folder`, folders in order of first
+/// appearance and files in the review's order within each — the same
+/// grouping as the desktop's TURN REVIEW list.
+List<FolderGroup> groupByFolder(List<TurnReviewFile> files) {
   final groups = <String?, List<TurnReviewFile>>{};
   for (final file in files) {
     groups.putIfAbsent(file.folder, () => []).add(file);
   }
-  return [for (final e in groups.entries) (e.key, e.value)];
+  return [
+    for (final MapEntry(:key, :value) in groups.entries)
+      (folder: key, files: value),
+  ];
+}
+
+class _FolderHeader extends StatelessWidget {
+  final String folder;
+  final List<TurnReviewFile> files;
+
+  const _FolderHeader({required this.folder, required this.files});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final left =
+        files.where((f) => f.decision == TurnFileDecision.pending).length;
+    return Padding(
+      key: ValueKey('turn-review-folder-$folder'),
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: Row(
+        children: [
+          Icon(Icons.folder_outlined, size: 16, color: scheme.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              folder,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelLarge?.copyWith(color: scheme.primary),
+            ),
+          ),
+          Text(
+            left == 0 ? 'all decided' : '$left of ${files.length} left',
+            style: textTheme.labelSmall?.copyWith(color: Colors.white54),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Notice extends StatelessWidget {

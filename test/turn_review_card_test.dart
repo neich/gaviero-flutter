@@ -18,6 +18,8 @@ import 'package:gaviero_remote/src/transport/socket.dart';
 import 'package:gaviero_remote/src/ui/chat_screen.dart';
 import 'package:gaviero_remote/src/ui/turn_review_card.dart';
 
+import 'support/relay_machine.dart';
+
 final class CapturingSocket implements WsSocket {
   final _controller = StreamController<dynamic>();
   final sent = <Map<String, Object?>>[];
@@ -65,7 +67,8 @@ Future<(RemoteController, CapturingSocket)> connected({
     connection: RemoteConnection(connector: (url, token) async => socket),
     state: AppState(),
   );
-  await controller.connection.start(Uri.parse('wss://h/v1/ws'), 't');
+  await controller.connection.start(Uri.parse('wss://h/v1/ws'), 't',
+      tlsCa: testTlsCa, relayHost: testRelayHost);
   socket.serverSend(serverFrame('hello', {
     'protocol_version': {'major': 1, 'minor': 2},
     'instance_id': 'i1',
@@ -264,6 +267,75 @@ void main() {
       'turn_id': 'turn-1',
       'action': 'keep_file',
       'path': 'assets/big.bin',
+    });
+  });
+
+  testWidgets('files are grouped by folder and actions name the folder',
+      (tester) async {
+    final (controller, socket) = (await tester.runAsync(connected))!;
+    // Folders interleaved on the wire: the card still lists each once.
+    const multi = TurnReview(
+      turnId: 'turn-1',
+      convId: 'c1',
+      outcome: TurnOutcome.completed,
+      files: [
+        TurnReviewFile(
+          path: 'src/main.rs',
+          folder: 'gaviero',
+          change: TurnFileChange.modified,
+          decision: TurnFileDecision.keep,
+          revertible: true,
+          binary: false,
+        ),
+        TurnReviewFile(
+          path: 'src/main.rs',
+          folder: 'gaviero-flutter',
+          change: TurnFileChange.modified,
+          decision: TurnFileDecision.pending,
+          revertible: true,
+          binary: false,
+        ),
+        TurnReviewFile(
+          path: 'README.md',
+          folder: 'gaviero',
+          change: TurnFileChange.modified,
+          decision: TurnFileDecision.pending,
+          revertible: true,
+          binary: false,
+        ),
+      ],
+    );
+    expect(
+      [
+        for (final g in groupByFolder(multi.files))
+          '${g.folder}: ${[for (final f in g.files) f.path].join(', ')}',
+      ],
+      ['gaviero: src/main.rs, README.md', 'gaviero-flutter: src/main.rs'],
+    );
+
+    controller.state.applyEnvelope(env(snapshotWith([multi])));
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(controller: controller)));
+    expect(find.byKey(const ValueKey('turn-review-folder-gaviero')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('turn-review-folder-gaviero-flutter')),
+        findsOneWidget);
+    expect(find.text('1 of 2 left'), findsOneWidget);
+    expect(find.text('1 of 1 left'), findsOneWidget);
+
+    // The same path in two folders: only gaviero-flutter's is still pending.
+    final reject = find.descendant(
+      of: find.ancestor(of: find.text('src/main.rs'), matching: find.byType(Card)),
+      matching: find.widgetWithText(TextButton, 'Reject'),
+    );
+    expect(reject, findsOneWidget);
+    await tester.ensureVisible(reject);
+    await tester.tap(reject);
+    await tester.pump();
+    expect(lastPayload(socket, 'turn_review_action'), {
+      'turn_id': 'turn-1',
+      'action': 'revert_file',
+      'path': 'src/main.rs',
+      'folder': 'gaviero-flutter',
     });
   });
 

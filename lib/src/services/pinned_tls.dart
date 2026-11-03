@@ -1,16 +1,15 @@
-/// Trust and routing for machines reached through a relay.
+/// Trust and routing for machines, all of which are reached through
+/// gaviero-relay.
 ///
-/// * Pinned CA (desktop `remote.tlsMode = "pinnedCa"`): the pairing QR
-///   carries the machine's private CA as `tls_ca` (base64 DER). For that
-///   machine the app trusts ONLY this CA — never the system roots — and
-///   host-name checking stays on.
-/// * gaviero-relay (`relay_host` in the QR): every connection is dialled to
+/// * Pinned CA: the pairing QR carries the machine's private CA as `tls_ca`
+///   (base64 DER). For that machine the app trusts ONLY this CA — never the
+///   system roots — and host-name checking stays on.
+/// * Relay routing (`relay_host` in the QR): every connection is dialled to
 ///   the relay (port 443) and TLS is started with SNI = the URL host (the
 ///   instance's route). The relay forwards by SNI and never decrypts, so
 ///   TLS is still end to end with the machine's sidecar.
 ///
-/// Machines without `tls_ca` keep default system trust (Tailscale certs
-/// chain to Let's Encrypt). dart:io only; no extra packages.
+/// dart:io only; no extra packages.
 library;
 
 import 'dart:convert';
@@ -72,32 +71,25 @@ bool isValidRelayHost(String value) =>
   return (relayHost, 443);
 }
 
-/// `HttpClient` for a machine:
-/// * relay: dial `relayHost`, TLS with SNI = the URL host, pinned CA;
-/// * pinned CA only: normal dialling, pinned CA;
-/// * neither: default system trust.
+/// `HttpClient` for a machine: dial `relayHost`, start TLS with SNI = the
+/// URL host (the instance's route), and trust only the machine's pinned CA.
 ///
 /// The URI handed to the factory may report port 0 for a port-less `wss:`
 /// URL (verified 2026-10-15), so the relay address never comes from it.
-HttpClient httpClientFor(String? tlsCa, {String? relayHost}) {
-  if (relayHost != null && tlsCa != null) {
-    final (host, port) = splitRelayHost(relayHost);
-    final client = HttpClient()..findProxy = (_) => 'DIRECT';
-    client.connectionFactory = (uri, proxyHost, proxyPort) async {
-      final task = await Socket.startConnect(host, port);
-      final secured = task.socket.then((socket) {
-        socket.setOption(SocketOption.tcpNoDelay, true);
-        return SecureSocket.secure(
-          socket,
-          host: uri.host,
-          context: pinnedSecurityContext(tlsCa),
-        );
-      });
-      return ConnectionTask.fromSocket(secured, task.cancel);
-    };
-    return client;
-  }
-  return tlsCa == null
-      ? HttpClient()
-      : HttpClient(context: pinnedSecurityContext(tlsCa));
+HttpClient httpClientFor(String tlsCa, {required String relayHost}) {
+  final (host, port) = splitRelayHost(relayHost);
+  final client = HttpClient()..findProxy = (_) => 'DIRECT';
+  client.connectionFactory = (uri, proxyHost, proxyPort) async {
+    final task = await Socket.startConnect(host, port);
+    final secured = task.socket.then((socket) {
+      socket.setOption(SocketOption.tcpNoDelay, true);
+      return SecureSocket.secure(
+        socket,
+        host: uri.host,
+        context: pinnedSecurityContext(tlsCa),
+      );
+    });
+    return ConnectionTask.fromSocket(secured, task.cancel);
+  };
+  return client;
 }

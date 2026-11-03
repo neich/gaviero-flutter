@@ -27,9 +27,9 @@ final class WorkspaceInfo {
   Map<String, Object?> toJson() => {'id': id, 'display_name': displayName};
 }
 
-/// The machine an instance runs on (1.1). `host` is the MagicDNS name the
-/// certificate covers; `directoryUrl` is the machine directory
-/// (`https://<host>:<directoryPort>/v1/instances`) when enabled.
+/// The machine an instance runs on (1.1). `host` is the machine name the
+/// certificate covers (`<machine>.<relay host>`); `directoryUrl` is the
+/// instance's `https://<route>/v1/instances`, which lists the whole machine.
 final class MachineInfo {
   final String host;
   final String? directoryUrl;
@@ -922,9 +922,9 @@ final class TurnReviewFile {
   /// Workspace-folder-relative, `/`-separated. Echoed by `turn_review_action`.
   final String path;
 
-  /// 1.5: display label of the workspace folder [path] is relative to. The
-  /// review lists files under a header per folder; echoed by
-  /// `turn_review_action` exactly when present. `null` from older servers.
+  /// 1.5: the workspace folder's label, unique within the review. The card
+  /// groups files by it, and `turn_review_action` echoes it with [path] —
+  /// two folders can change the same path. `null` from older servers.
   final String? folder;
   final TurnFileChange change;
   final TurnFileDecision decision;
@@ -973,14 +973,14 @@ final class TurnReviewFile {
   }
 
   Map<String, Object?> toJson() {
-    final map = <String, Object?>{
-      'path': path,
-      if (folder != null) 'folder': folder,
+    final map = <String, Object?>{'path': path};
+    _put(map, 'folder', folder);
+    map.addAll({
       'change': changeWire ?? change.wire,
       'decision': decisionWire ?? decision.wire,
       'revertible': revertible,
       'binary': binary,
-    };
+    });
     if (overlapWith.isNotEmpty) map['overlap_with'] = overlapWith;
     return map;
   }

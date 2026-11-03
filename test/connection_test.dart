@@ -15,6 +15,8 @@ import 'package:gaviero_remote/src/protocol/protocol.dart';
 import 'package:gaviero_remote/src/transport/connection.dart';
 import 'package:gaviero_remote/src/transport/socket.dart';
 
+import 'support/relay_machine.dart';
+
 final class FakeSocket implements WsSocket {
   final _controller = StreamController<dynamic>();
   final sent = <Map<String, Object?>>[];
@@ -102,7 +104,8 @@ final class Harness {
   FakeSocket get socket => sockets.last;
 
   Future<void> start() =>
-      connection.start(Uri.parse('wss://host:4443/v1/ws'), 'tok');
+      connection.start(Uri.parse('wss://host/v1/ws'), 'tok',
+          tlsCa: testTlsCa, relayHost: testRelayHost);
 
   Future<void> settle() => Future<void>.delayed(Duration.zero);
 

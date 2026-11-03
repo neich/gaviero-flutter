@@ -40,31 +40,33 @@
 | 1 | `hello.capabilities` | `[]` | contains `"latest_page"` and `"instances"` | feature detection, D1, D4 |
 | 2 | `hello.machine` | absent | optional `{ host, directory_url? }` | learn the directory URL from any connection, D2 |
 | 3 | `request_messages.before_seq` | required | **optional**; absent ⇒ the newest page (server treats it as `u64::MAX`) | open any tab cold, D4 |
-| 4 | `GET /v1/instances` | — | new HTTPS resource, `Authorization: Bearer`, on every instance listener **and** on the machine directory port (default `49151`) | discovery, D2 |
+| 4 | `GET /v1/instances` | — | new HTTPS resource, `Authorization: Bearer`, on every instance listener, so any relay route lists the whole machine | discovery, D2 |
 | 5 | QR payload | 5 keys | optional `workspace_id`, `machine`, `directory_url` | pair once per machine, D3 |
 | 6 | Token scope | one token per workspace | one token per **machine** by default (`remote.tokenScope`); a workspace may opt out and then has its own token | storage model, D2 |
 
 `GET /v1/instances` response (fixture `protocol/fixtures/http/instances.json` after re-vendoring):
 
 ```json
-{ "protocol_version": {"major":1,"minor":1}, "host": "neichtop.tail9b1d28.ts.net",
+{ "protocol_version": {"major":1,"minor":1}, "host": "desk.gaviero.example.com",
   "generated_at": "2026-09-09T12:00:00Z",
   "instances": [ { "instance_id": "9f1c…", "workspace": {"id":"0b7d245998c0e8c3","display_name":"gaviero"},
-                   "url": "wss://neichtop.tail9b1d28.ts.net:52093/v1/ws", "port": 52093,
+                   "url": "wss://0b7d245998c0e8c3-desk.gaviero.example.com/v1/ws", "port": 52093,
                    "tui_version": "0.1.0", "started_at": "2026-09-09T11:58:03Z",
                    "client_connected": false } ] }
 ```
 
-`401` without a valid bearer, `429` when flooded, `404` for `/v1/ws` on the directory port. Entries
+`401` without a valid bearer, `429` when flooded. Entries
 are only instances whose heartbeat is fresh (≤ 90 s), so "listed" means "running".
 
 QR payload 1.1:
 
 ```json
-{ "kind": "gaviero-remote", "url": "wss://host.tailnet.ts.net:PORT/v1/ws", "token": "SECRET",
+{ "kind": "gaviero-remote", "url": "wss://0b7d245998c0e8c3-desk.gaviero.example.com/v1/ws", "token": "SECRET",
   "workspace": "display-name", "protocol_major": 1,
-  "workspace_id": "0b7d245998c0e8c3", "machine": "host.tailnet.ts.net",
-  "directory_url": "https://host.tailnet.ts.net:49151/v1/instances" }
+  "workspace_id": "0b7d245998c0e8c3", "machine": "desk.gaviero.example.com",
+  "directory_url": "https://0b7d245998c0e8c3-desk.gaviero.example.com/v1/instances",
+  "tls_ca": "MIIBhDCCASqgAwIBAgIU…", "relay_host": "gaviero.example.com",
+  "relay_secret": "RELAY-SECRET" }
 ```
 
 **Compatibility rules.** Feature-detect with `hello.capabilities`, never with `minor`. Without
@@ -109,8 +111,8 @@ Toolchain: **Flutter 3.44.8 / Dart 3.12.2** (installed). Pins unchanged from Pla
 `mobile_scanner ^7.4.0`, `flutter_local_notifications ^22.2.0`. Plan B §2.1's do-not-use list still
 applies.
 
-The directory request is `dart:io` `HttpClient` with default certificate validation — Tailscale
-certificates chain to Let's Encrypt, so **no pinning, no `badCertificateCallback`**. Wrap it behind a
+The directory request is `dart:io` `HttpClient` dialled through the relay with the machine's pinned
+CA (`httpClientFor`), never a `badCertificateCallback`. Wrap it behind a
 `typedef DirectoryFetcher = Future<DirectoryResult> Function(Uri url, String bearerToken)` so tests
 inject a fake, exactly as `WsConnector` does for the socket (`lib/src/transport/socket.dart`).
 
@@ -132,9 +134,8 @@ Store          { v: 2, machines: [...], instances: [...], lastInstance?: Instanc
   On first load, if the legacy keys `pairing_url` / `pairing_token` / `pairing_workspace` exist,
   migrate them into one machine (host parsed from the URL, no `directoryUrl`) plus one instance, then
   delete the legacy keys. Migration is idempotent and tested.
-- A machine's `directoryUrl` is learned from the QR, from `hello.machine.directory_url`, or from the
-  manual form (host + optional directory port, default `49151` ⇒
-  `https://<host>:49151/v1/instances`).
+- A machine's `directoryUrl` (`https://<route>/v1/instances`) is learned from the QR or from
+  `hello.machine.directory_url`.
 - `hello.workspace.id` always confirms or fills in `workspaceId`; `hello.workspace.display_name`
   refreshes the name.
 
