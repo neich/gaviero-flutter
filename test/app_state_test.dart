@@ -387,4 +387,61 @@ void main() {
     expect(state.active!.lastTurnCostUsd, 0.03);
     expect(state.active!.sessionCostUsd, closeTo(0.05, 1e-9));
   });
+
+  group('tab order', () {
+    List<String> order(AppState s) =>
+        [for (final c in s.tabOrder) c.summary.convId];
+
+    AppState fourTabs() => AppState()
+      ..applyEnvelope(env(snapshot(
+        conversations: [summary('c1'), summary('c2'), summary('c3'), summary('c4')],
+      )));
+
+    test('with no activity seen: viewed first, then the desktop order', () {
+      final state = fourTabs();
+      expect(order(state), ['c1', 'c2', 'c3', 'c4']);
+      state.view('c3');
+      expect(order(state), ['c3', 'c1', 'c2', 'c4']);
+    });
+
+    test('streaming tabs come before idle ones, viewed stays first', () {
+      final state = fourTabs();
+      state.applyEnvelope(env(ConversationStateChanged(
+          conversation: summary('c4', streaming: true), activeId: 'c1')));
+      expect(order(state), ['c1', 'c4', 'c2', 'c3']);
+      // Viewing a streaming tab puts it first, not in the streaming group.
+      state.view('c4');
+      expect(order(state), ['c4', 'c1', 'c2', 'c3']);
+    });
+
+    test('within a group the most recently active is further left', () {
+      final state = fourTabs();
+      state.applyEnvelope(env(MessageComplete(
+          convId: 'c2', message: msg(20, 'a', role: Role.assistant))));
+      state.applyEnvelope(env(MessageComplete(
+          convId: 'c3', message: msg(20, 'b', role: Role.assistant))));
+      expect(order(state), ['c1', 'c3', 'c2', 'c4']);
+
+      // Two streaming tabs: the later turn start leads.
+      state.applyEnvelope(env(ConversationStateChanged(
+          conversation: summary('c2', streaming: true), activeId: 'c1')));
+      state.applyEnvelope(env(ConversationStateChanged(
+          conversation: summary('c4', streaming: true), activeId: 'c1')));
+      expect(order(state), ['c1', 'c4', 'c2', 'c3']);
+
+      // Chunks of an ongoing turn do not reshuffle the streaming group.
+      state.applyEnvelope(env(const StreamChunk(
+          convId: 'c2', turnId: 't1', text: 'x')));
+      state.applyEnvelope(env(const StreamChunk(
+          convId: 'c4', turnId: 't2', text: 'y')));
+      state.applyEnvelope(env(const StreamChunk(
+          convId: 'c2', turnId: 't1', text: 'z')));
+      expect(order(state), ['c1', 'c4', 'c2', 'c3']);
+
+      // c4 finishes first: it is idle and the most recent idle tab.
+      state.applyEnvelope(env(ConversationStateChanged(
+          conversation: summary('c4'), activeId: 'c1')));
+      expect(order(state), ['c1', 'c2', 'c4', 'c3']);
+    });
+  });
 }

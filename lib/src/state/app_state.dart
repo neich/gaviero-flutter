@@ -30,6 +30,11 @@ final class ConversationData {
   /// Assistant `message_complete` count while this tab is not viewed.
   int unread;
 
+  /// Local recency stamp from [AppState]'s activity clock: higher is more
+  /// recent, 0 = no activity seen since this client connected. The wire
+  /// carries no timestamps, so this orders the tab strip only.
+  int lastActivity = 0;
+
   /// In-progress turn (coalesced `stream_chunk` text).
   String streamingText = '';
   String? streamingTurnId;
@@ -98,6 +103,37 @@ final class AppState extends ChangeNotifier {
 
   List<ConversationData> get conversations =>
       List.unmodifiable(_conversations.values);
+
+  /// Tab strip order, left to right: the viewed conversation, then those
+  /// streaming, then the rest. Within a group the most recently active comes
+  /// first; ties (no activity seen yet) keep the desktop's tab order.
+  List<ConversationData> get tabOrder {
+    final order = [..._conversations.values];
+    final index = {
+      for (final (i, conv) in order.indexed) conv.summary.convId: i,
+    };
+    int group(ConversationData c) => c.summary.convId == _viewedId
+        ? 0
+        : c.summary.isStreaming
+        ? 1
+        : 2;
+    // List.sort is not stable; the desktop index breaks the remaining ties.
+    order.sort((a, b) {
+      final byGroup = group(a).compareTo(group(b));
+      if (byGroup != 0) return byGroup;
+      final byRecency = b.lastActivity.compareTo(a.lastActivity);
+      if (byRecency != 0) return byRecency;
+      return index[a.summary.convId]!.compareTo(index[b.summary.convId]!);
+    });
+    return order;
+  }
+
+  int _activityClock = 0;
+
+  /// Stamps turn-level activity only (a new turn, a completed message, a
+  /// streaming start or end) — not every chunk, so two tabs streaming at
+  /// once do not swap places on each delta.
+  void _touch(ConversationData conv) => conv.lastActivity = ++_activityClock;
   String? get activeId => _activeId;
   String? get viewedId => _viewedId;
   ConversationData? get active =>
@@ -215,16 +251,21 @@ final class AppState extends ChangeNotifier {
           conv.streamingTurnId = chunk.turnId;
           conv.streamingText = '';
           conv.liveToolCalls = [];
+          _touch(conv);
         }
         conv.streamingText += chunk.text;
       case final StreamingStatus status:
         final conv = _conversations[status.convId];
         if (conv == null) break;
-        conv.streamingTurnId ??= status.turnId;
+        if (conv.streamingTurnId == null) {
+          conv.streamingTurnId = status.turnId;
+          _touch(conv);
+        }
         conv.streamingStatus = status.status;
       case final StreamingEnded ended:
         final conv = _conversations[ended.convId];
         if (conv != null) {
+          _touch(conv);
           conv.streamingStatus = null;
           conv.liveToolCalls = [];
           // A cancelled turn's partial text never becomes a message; drop it
@@ -242,11 +283,13 @@ final class AppState extends ChangeNotifier {
           conv.streamingTurnId = tool.turnId;
           conv.streamingText = '';
           conv.liveToolCalls = [];
+          _touch(conv);
         }
         conv.liveToolCalls = [...conv.liveToolCalls, tool.toolName];
       case final MessageComplete complete:
         final conv = _conversations[complete.convId];
         if (conv == null) break;
+        _touch(conv);
         _insertMessage(conv, complete.message);
         if (complete.message.role == Role.assistant) {
           conv.streamingText = '';
@@ -306,6 +349,9 @@ final class AppState extends ChangeNotifier {
     for (final summary in snapshot.conversations) {
       final existing = previous[summary.convId];
       if (existing != null) {
+        if (existing.summary.isStreaming != summary.isStreaming) {
+          _touch(existing);
+        }
         existing.summary = summary;
         existing.transcriptStale = true;
         fresh[summary.convId] = existing;
@@ -357,8 +403,11 @@ final class AppState extends ChangeNotifier {
   void _upsertSummary(ConversationSummary summary) {
     final existing = _conversations[summary.convId];
     if (existing == null) {
-      _conversations[summary.convId] = ConversationData(summary);
+      _touch(_conversations[summary.convId] = ConversationData(summary));
     } else {
+      if (existing.summary.isStreaming != summary.isStreaming) {
+        _touch(existing);
+      }
       existing.summary = summary;
       if (!summary.isStreaming && summary.pendingTurnId == null) {
         existing.streamingStatus = null;
