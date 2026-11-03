@@ -36,10 +36,14 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
     if (old.review.turnId != widget.review.turnId) _sending = false;
   }
 
-  Future<void> _act(TurnReviewActionKind action, {String? path}) async {
+  Future<void> _act(TurnReviewActionKind action, {TurnReviewFile? file}) async {
     setState(() => _sending = true);
-    final outcome = await widget.controller
-        .turnReviewAction(widget.review.turnId, action, path: path);
+    final outcome = await widget.controller.turnReviewAction(
+      widget.review.turnId,
+      action,
+      path: file?.path,
+      folder: file?.folder,
+    );
     if (mounted) {
       setState(() => _sending = false);
       showOutcome(context, outcome);
@@ -108,15 +112,39 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
                   text: warning,
                 ),
               const SizedBox(height: 6),
-              for (final file in review.files)
-                _FileRow(
-                  file: file,
-                  sending: _sending,
-                  onAccept: () =>
-                      _act(TurnReviewActionKind.keepFile, path: file.path),
-                  onReject: () =>
-                      _act(TurnReviewActionKind.revertFile, path: file.path),
-                ),
+              // 1.5: a header per workspace folder, in order of first
+              // appearance, as the desktop list; older servers list flat.
+              for (final (folder, files) in _groupByFolder(review.files)) ...[
+                if (folder != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, bottom: 2),
+                    child: Row(
+                      children: [
+                        Icon(Icons.folder_outlined,
+                            size: 14, color: scheme.secondary),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            folder,
+                            key: ValueKey('turn-review-folder-$folder'),
+                            style: textTheme.labelMedium
+                                ?.copyWith(color: scheme.secondary),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                for (final file in files)
+                  _FileRow(
+                    file: file,
+                    sending: _sending,
+                    onAccept: () =>
+                        _act(TurnReviewActionKind.keepFile, file: file),
+                    onReject: () =>
+                        _act(TurnReviewActionKind.revertFile, file: file),
+                  ),
+              ],
               const SizedBox(height: 4),
               // The whole turn: applies to every file not decided yet.
               Row(
@@ -146,6 +174,17 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
       ),
     );
   }
+}
+
+/// Files grouped by [TurnReviewFile.folder] in order of first appearance;
+/// files without one (pre-1.5 servers) share a `null` group, drawn flat.
+List<(String?, List<TurnReviewFile>)> _groupByFolder(
+    List<TurnReviewFile> files) {
+  final groups = <String?, List<TurnReviewFile>>{};
+  for (final file in files) {
+    groups.putIfAbsent(file.folder, () => []).add(file);
+  }
+  return [for (final e in groups.entries) (e.key, e.value)];
 }
 
 class _Notice extends StatelessWidget {
@@ -223,6 +262,7 @@ class _FileRow extends StatelessWidget {
       if (file.binary) 'binary',
     ];
     return Card(
+      key: ValueKey('turn-file-${file.folder ?? ''}/${file.path}'),
       margin: const EdgeInsets.symmetric(vertical: 3),
       color: scheme.surfaceContainerHigh,
       child: Padding(
