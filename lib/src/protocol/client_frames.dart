@@ -49,7 +49,10 @@ sealed class ClientPayload {
 
 final class RequestTerminals extends ClientPayload {
   final int? terminalId;
-  const RequestTerminals({this.terminalId});
+  /// 1.7 (`shell_history`): also return up to this many of the selected
+  /// tab's recent shell-history commands as `history`, oldest first.
+  final int? history;
+  const RequestTerminals({this.terminalId, this.history});
 
   @override
   String get frameType => 'request_terminals';
@@ -57,6 +60,7 @@ final class RequestTerminals extends ClientPayload {
   @override
   Map<String, Object?> toPayloadJson() => {
     if (terminalId != null) 'terminal_id': terminalId,
+    if (history != null) 'history': history,
   };
 }
 
