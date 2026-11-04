@@ -8,6 +8,7 @@ import '../protocol/client_frames.dart';
 import '../state/controller.dart';
 import '../transport/connection.dart';
 import 'chat_screen.dart';
+import 'shell_paths.dart';
 
 /// Mirrors the existing desktop PTYs. Input is never replayed on reconnect.
 class ShellScreen extends StatefulWidget {
@@ -22,17 +23,27 @@ class _ShellScreenState extends State<ShellScreen>
     with WidgetsBindingObserver {
   final _input = TextEditingController();
   final _drafts = <int, String>{};
-  /// Commands run from this screen, oldest first. Recalling one only touches
-  /// the box, never the PTY's line buffer, so it can be edited before sending.
-  final _history = <String>[];
-  /// Position in [_history] while recalling, or null when on the live line.
-  int? _historyAt;
+  /// Per tab, commands sent from this screen, oldest first: the recall list
+  /// for servers without `shell_history`.
+  final _sent = <int, List<String>>{};
+  /// The list ↑/↓ walk, captured when a recall starts: the tab's own shell
+  /// history from the server, or [_sent]. Only single-line entries — the box
+  /// is one line.
+  List<String> _recallList = const [];
+  /// Position in [_recallList] while recalling, or null on the live line.
+  int? _recallAt;
   /// The line being typed when recall started, restored past the newest entry.
   String _liveLine = '';
+  bool _loadingHistory = false;
   Timer? _timer;
   List<Map<String, Object?>> _tabs = [];
   int? _selected;
   String _output = '';
+  /// Workspace roots from the server; empty from servers that omit them.
+  ShellPaths _paths = ShellPaths(const []);
+  String _rootsKey = '';
+  /// Show prompt and output paths relative to the workspace roots.
+  bool _shortPaths = true;
   String? _error;
   bool _polling = false;
   bool _sending = false;
@@ -43,6 +54,8 @@ class _ShellScreenState extends State<ShellScreen>
   RemoteConnection get _connection => widget.controller.connection;
   bool get _supported =>
       _connection.hello?.capabilities.contains('shell_sessions') ?? false;
+  bool get _serverHistory =>
+      _connection.hello?.capabilities.contains('shell_history') ?? false;
   bool get _connected => _connection.phase == ConnectionPhase.connected;
   bool get _fieldEnabled =>
       _connected && _supported && _fresh && _selected != null;
@@ -105,6 +118,14 @@ class _ShellScreenState extends State<ShellScreen>
           _tabs = tabs;
           _selected = selected;
           _output = screen?['text'] as String? ?? '';
+          // Polled every 750 ms; only rebuild the patterns when roots change.
+          final roots = ShellRoot.listFromJson(result['roots']);
+          final rootsKey =
+              [for (final r in roots) '${r.label}\u0000${r.path}'].join('\u0001');
+          if (rootsKey != _rootsKey) {
+            _rootsKey = rootsKey;
+            _paths = ShellPaths(roots);
+          }
           _fresh = true;
           _error = null;
         });
@@ -164,7 +185,10 @@ class _ShellScreenState extends State<ShellScreen>
           _drafts.remove(id);
         }
         if (includeDraft && key == '\r' && draft.trim().isNotEmpty) {
-          _remember(draft);
+          final sent = _sent.putIfAbsent(id, () => []);
+          sent.add(draft);
+          if (sent.length > 200) sent.removeAt(0);
+          _resetRecall();
         }
         _refresh();
       } else {
@@ -184,27 +208,65 @@ class _ShellScreenState extends State<ShellScreen>
     }
   }
 
-  /// Walks [_history] the way a shell does: ↑ steps back from the live line,
-  /// ↓ steps toward it and restores it, and the caret lands at the end of the
-  /// recalled entry so it can be edited in place.
-  void _recall(int step) {
-    if (_history.isEmpty) return;
-    final at = _historyAt;
+  /// ↑ steps back through the tab's history from the live line, ↓ steps
+  /// toward it and finally restores it. The recalled command lands in the box
+  /// with the caret at its end, to be edited there; nothing reaches the shell
+  /// until Enter. The list is read when a recall starts: from the server
+  /// (`shell_history` — the shell's own history file, so commands typed on the
+  /// computer are there too), else the commands sent from this screen.
+  Future<void> _recall(int step) async {
+    if (!_fieldEnabled || _loadingHistory) return;
+    final at = _recallAt;
     if (at == null) {
       if (step > 0) return;
+      final id = _selected!;
+      final generation = _generation;
+      final list = _serverHistory
+          ? await _loadHistory(id)
+          : List.of(_sent[id] ?? const <String>[]);
+      if (!mounted || generation != _generation || list == null) return;
+      final lines = [for (final c in list) if (!c.contains('\n')) c];
+      if (lines.isEmpty) return;
+      _recallList = lines;
       _liveLine = _input.text;
-      _historyAt = _history.length - 1;
+      _recallAt = lines.length - 1;
     } else {
       final next = at + step;
-      if (next >= _history.length) {
-        _historyAt = null;
-        _setInput(_liveLine);
-        _liveLine = '';
+      if (next >= _recallList.length) {
+        final live = _liveLine;
+        _resetRecall();
+        _setInput(live);
         return;
       }
-      _historyAt = next < 0 ? 0 : next;
+      _recallAt = next < 0 ? 0 : next;
     }
-    _setInput(_history[_historyAt!]);
+    _setInput(_recallList[_recallAt!]);
+  }
+
+  /// The selected tab's shell history, oldest first; null when it could not
+  /// be read (the failure is shown, the box is left alone).
+  Future<List<String>?> _loadHistory(int id) async {
+    setState(() => _loadingHistory = true);
+    try {
+      final outcome = await _connection.send(
+          RequestTerminals(terminalId: id, history: 200));
+      if (outcome is CommandOk) {
+        final result = outcome.result.result as Map<String, Object?>;
+        if (result['selected_id'] != id) return null;
+        return (result['history'] as List? ?? const []).cast<String>();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          outcome is CommandFail ? outcome.error.message
+              : 'Unable to read the shell history.',
+        )));
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      if (mounted) setState(() => _loadingHistory = false);
+    }
   }
 
   void _setInput(String text) {
@@ -214,29 +276,110 @@ class _ShellScreenState extends State<ShellScreen>
     );
   }
 
-  /// Keeps a command that actually ran so it can be recalled and edited.
-  void _remember(String command) {
-    _history.add(command);
-    if (_history.length > 200) _history.removeAt(0);
-    _resetRecall();
-  }
-
   void _resetRecall() {
-    _historyAt = null;
+    _recallList = const [];
+    _recallAt = null;
     _liveLine = '';
   }
 
-  Widget _keyButton(String label, String keys, {bool includeDraft = false}) =>
-      TextButton(
-        onPressed: _canInput
-            ? () => _send(keys, includeDraft: includeDraft) : null,
+  /// Moves the box's caret; [to] maps the current caret to the new one.
+  void _moveCaret(int Function(String text, int caret) to) {
+    final value = _input.value;
+    final caret = value.selection.isValid
+        ? value.selection.extentOffset : value.text.length;
+    final next = to(value.text, caret).clamp(0, value.text.length);
+    _input.selection = TextSelection.collapsed(offset: next);
+  }
+
+  static int _wordLeft(String text, int caret) {
+    var i = caret;
+    while (i > 0 && text[i - 1] == ' ') {
+      i--;
+    }
+    while (i > 0 && text[i - 1] != ' ') {
+      i--;
+    }
+    return i;
+  }
+
+  static int _wordRight(String text, int caret) {
+    var i = caret;
+    while (i < text.length && text[i] == ' ') {
+      i++;
+    }
+    while (i < text.length && text[i] != ' ') {
+      i++;
+    }
+    return i;
+  }
+
+  Widget _caretButton(String label, String tooltip,
+      int Function(String text, int caret) to,
+      {int Function(String text, int caret)? onHold}) => Tooltip(
+        message: tooltip,
+        child: TextButton(
+          onPressed: _fieldEnabled ? () => _moveCaret(to) : null,
+          onLongPress: _fieldEnabled && onHold != null
+              ? () => _moveCaret(onHold) : null,
+          child: Text(label),
+        ),
+      );
+
+  Widget _keyButton(String label, String keys) => TextButton(
+        onPressed: _canInput ? () => _send(keys, includeDraft: false) : null,
         child: Text(label),
       );
 
+  /// A tab's name: its cwd relative to the workspace roots, falling back to
+  /// the cwd's last segment, then the shell's title. The id is appended only
+  /// when two tabs would otherwise read the same.
+  List<String> _tabLabels() {
+    String base(Map<String, Object?> tab) {
+      final cwd = tab['cwd'] as String? ?? '';
+      final relative = _paths.relative(cwd);
+      if (relative != null) return relative;
+      final segments =
+          cwd.split(RegExp(r'[\\/]')).where((s) => s.isNotEmpty).toList();
+      if (_paths.isEmpty || segments.isEmpty) {
+        return '${tab['title']} · ${tab['id']}';
+      }
+      return segments.last;
+    }
+
+    final names = [for (final tab in _tabs) base(tab)];
+    return [
+      for (final (i, name) in names.indexed)
+        names.where((n) => n == name).length > 1
+            ? '$name · ${_tabs[i]['id']}'
+            : name,
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final instanceName = widget.controller.current?.displayName;
+    final labels = _tabLabels();
+    final output =
+        _shortPaths && !_paths.isEmpty ? _paths.shorten(_output) : _output;
     return Scaffold(
-      appBar: AppBar(title: const Text('Shell sessions')),
+      appBar: AppBar(
+        title: Text(
+          instanceName == null || instanceName.isEmpty
+              ? 'Shell sessions'
+              : 'Shell sessions · $instanceName',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          if (!_paths.isEmpty)
+            IconButton(
+              key: const Key('shell-full-paths'),
+              tooltip: _shortPaths ? 'Show full paths' : 'Show short paths',
+              icon: Icon(_shortPaths ? Icons.unfold_more : Icons.unfold_less),
+              onPressed: () => setState(() => _shortPaths = !_shortPaths),
+            ),
+        ],
+      ),
       body: SafeArea(child: Column(children: [
         ConnectionBanner(connection: _connection,
             instanceName: widget.controller.current?.displayName),
@@ -246,16 +389,21 @@ class _ShellScreenState extends State<ShellScreen>
         if (_tabs.isNotEmpty)
           SizedBox(height: 52, child: ListView(
             scrollDirection: Axis.horizontal,
-            children: [for (final tab in _tabs)
+            children: [for (final (i, tab) in _tabs.indexed)
               Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: ChoiceChip(
-                  label: Text('${tab['title']} · ${tab['id']}'),
+                  label: Text(labels[i]),
+                  tooltip: tab['cwd'] as String?,
                   selected: tab['id'] == _selected,
                   onSelected: _sending ? null : (_) => _select(tab['id'] as int),
                 )),
             ],
           )),
-        if (_selected != null && _tabs.any((tab) => tab['id'] == _selected))
+        // The tab already names the cwd relative to the workspace; the
+        // absolute one shows only with full paths (or from older servers).
+        if ((!_shortPaths || _paths.isEmpty) &&
+            _selected != null &&
+            _tabs.any((tab) => tab['id'] == _selected))
           Padding(padding: const EdgeInsets.all(8), child: Text(
             _tabs.firstWhere((tab) => tab['id'] == _selected)['cwd'] as String,
             maxLines: 2, overflow: TextOverflow.ellipsis,
@@ -274,61 +422,69 @@ class _ShellScreenState extends State<ShellScreen>
               padding: const EdgeInsets.all(12),
               child: SingleChildScrollView(child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                child: SelectableText(_output, style: const TextStyle(
+                child: SelectableText(output, style: const TextStyle(
                   fontFamily: 'monospace', fontSize: 13, color: Colors.white,
                 )),
               )),
             )),
+        // The screen above is output only. Ctrl+C and Esc are the only keys
+        // that go straight to the shell; everything else edits the box.
         SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(
           children: [
             _keyButton('Ctrl+C', '\x03'),
             _keyButton('Esc', '\x1b'),
-            _keyButton('Tab', '\t', includeDraft: true),
-            // ↑/↓ put a command back in the box so it can be edited; holding
-            // one still sends the arrow key itself to the shell.
-            TextButton(
+            const SizedBox(width: 8),
+            Tooltip(message: 'Previous command', child: TextButton(
               onPressed: _fieldEnabled ? () => _recall(-1) : null,
-              onLongPress: _canInput
-                  ? () => _send('\x1b[A', includeDraft: false) : null,
               child: const Text('↑'),
-            ),
-            TextButton(
+            )),
+            Tooltip(message: 'Next command', child: TextButton(
               onPressed: _fieldEnabled ? () => _recall(1) : null,
-              onLongPress: _canInput
-                  ? () => _send('\x1b[B', includeDraft: false) : null,
               child: const Text('↓'),
-            ),
-            _keyButton('←', '\x1b[D'),
-            _keyButton('→', '\x1b[C'),
-            _keyButton('⌫', '\x7f'),
+            )),
+            _caretButton('⇤', 'Start of line', (_, _) => 0),
+            _caretButton('←', 'Left (hold: word)', (_, c) => c - 1,
+                onHold: _wordLeft),
+            _caretButton('→', 'Right (hold: word)', (_, c) => c + 1,
+                onHold: _wordRight),
+            _caretButton('⇥', 'End of line', (t, _) => t.length),
           ],
         )),
-        Padding(padding: const EdgeInsets.all(8), child: Row(children: [
-          Expanded(child: CallbackShortcuts(
-            bindings: <ShortcutActivator, VoidCallback>{
-              const SingleActivator(LogicalKeyboardKey.arrowUp):
-                  () => _recall(-1),
-              const SingleActivator(LogicalKeyboardKey.arrowDown):
-                  () => _recall(1),
-            },
-            child: TextField(
-              controller: _input,
-              enabled: _fieldEnabled,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                hintText: 'Command or shell input',
-                helperText: _fieldEnabled
-                    ? '↑ ↓ history · hold a key to send the arrow' : null,
+        Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+          child: Row(children: [
+            Expanded(child: CallbackShortcuts(
+              bindings: <ShortcutActivator, VoidCallback>{
+                const SingleActivator(LogicalKeyboardKey.arrowUp):
+                    () => _recall(-1),
+                const SingleActivator(LogicalKeyboardKey.arrowDown):
+                    () => _recall(1),
+              },
+              // One line that scrolls sideways under the caret: drag it or
+              // use the caret keys to reach any part of a long command.
+              child: TextField(
+                key: const Key('shell-command'),
+                controller: _input,
+                enabled: _fieldEnabled,
+                autocorrect: false,
+                enableSuggestions: false,
+                maxLines: 1,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 16),
+                decoration: InputDecoration(
+                  border: const OutlineInputBorder(),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 16),
+                  hintText: 'Command',
+                  helperText: _fieldEnabled
+                      ? '↑ ↓ history · edit here · Enter runs it' : null,
+                ),
+                onSubmitted: (_) => _send('\r'),
               ),
-              onSubmitted: (_) => _send('\r'),
-            ),
-          )),
-          TextButton(onPressed: _canInput ? () => _send('') : null,
-              child: const Text('Type')),
-          IconButton(tooltip: 'Enter', icon: const Icon(Icons.keyboard_return),
-              onPressed: _canInput ? () => _send('\r') : null),
-        ])),
+            )),
+            IconButton(tooltip: 'Enter',
+                icon: const Icon(Icons.keyboard_return),
+                onPressed: _canInput ? () => _send('\r') : null),
+          ]),
+        ),
       ])),
     );
   }
