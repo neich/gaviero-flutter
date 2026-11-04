@@ -60,12 +60,10 @@ class _ChatScreenState extends State<ChatScreen> {
             turnReviews && conv != null && pendingReview == null
             ? controller.state.turnReviewResolutionFor(conv.summary.convId)
             : null;
-        // The instance (workspace folder) name leads the subtitle so the
-        // user can tell which gaviero instance this conversation lives on.
-        final subtitle = [
-          ?controller.current?.displayName,
-          ?conv?.summary.model,
-        ].where((s) => s.isNotEmpty).join(' · ');
+        // The tab strip already names the conversation, so the title is the
+        // instance (workspace / repo folder) this screen is connected to.
+        final instanceName = controller.current?.displayName;
+        final model = conv?.summary.model;
         return Scaffold(
           drawer: ConversationDrawer(controller: controller),
           appBar: AppBar(
@@ -73,15 +71,18 @@ class _ChatScreenState extends State<ChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  conv?.summary.title ?? 'Gaviero Remote',
+                  instanceName == null || instanceName.isEmpty
+                      ? 'Gaviero Remote'
+                      : instanceName,
+                  key: const Key('chat-title'),
                   style: const TextStyle(fontSize: 17),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (subtitle.isNotEmpty)
+                if (model != null && model.isNotEmpty)
                   Text(
-                    subtitle,
-                    key: const Key('chat-title-subtitle'),
+                    model,
+                    key: const Key('chat-title-model'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelSmall
@@ -275,23 +276,56 @@ class _MessageList extends StatelessWidget {
   }
 }
 
-class _ConversationTabs extends StatelessWidget {
+class _ConversationTabs extends StatefulWidget {
   final RemoteController controller;
   const _ConversationTabs({required this.controller});
 
   @override
+  State<_ConversationTabs> createState() => _ConversationTabsState();
+}
+
+class _ConversationTabsState extends State<_ConversationTabs> {
+  final _scroll = ScrollController();
+  String? _shownViewedId;
+
+  RemoteController get controller => widget.controller;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final conversations = controller.state.conversations;
+    // Viewed first, then streaming, then the rest, most recent first
+    // (AppState.tabOrder).
+    final conversations = controller.state.tabOrder;
     if (conversations.isEmpty) return const SizedBox.shrink();
     final viewedId = controller.state.viewedId;
+    if (viewedId != _shownViewedId) {
+      _shownViewedId = viewedId;
+      // The newly viewed tab moved to the far left; bring it into view.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients && _scroll.offset != 0) {
+          _scroll.animateTo(
+            0,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
     return SizedBox(
       height: 48,
       child: ListView(
+        controller: _scroll,
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         children: [
           for (final conv in conversations)
             Padding(
+              key: ValueKey('conv-tab-${conv.summary.convId}'),
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: GestureDetector(
                 onLongPress: () => _showOnDesktop(context, conv.summary.convId),
