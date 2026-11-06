@@ -20,13 +20,16 @@ final class WebLink extends LinkTarget {
 }
 
 /// A workspace file, optionally at a line range (`#L42`, `#L10-L20`,
-/// `path:42`).
+/// `path:42`) or a heading ([anchor], the fragment of `#install`).
 final class FileLink extends LinkTarget {
   final String path;
   final int? startLine;
   final int? endLine;
 
-  const FileLink(this.path, {this.startLine, this.endLine});
+  /// A fragment that is not a line target, as written (not decoded).
+  final String? anchor;
+
+  const FileLink(this.path, {this.startLine, this.endLine, this.anchor});
 
   String get name => path.split('/').last;
 }
@@ -115,13 +118,18 @@ LinkTarget resolveLink(
   }
   if (start != null && start < 1) start = 1;
   if (start != null && end != null && end < start) end = start;
+  final anchor = lines == null && fragment != null && fragment.isNotEmpty
+      ? fragment
+      : null;
 
   if (path.isEmpty) {
-    // `#…` alone: a place in the same document.
-    if (fromFile != null && start != null) {
-      return FileLink(fromFile, startLine: start, endLine: end);
+    // `#…` alone: a place in the same document (`#` is its top).
+    if (fromFile != null) {
+      return FileLink(fromFile, startLine: start, endLine: end, anchor: anchor);
     }
-    return const UnsupportedLink("Links to headings aren't supported yet.");
+    return const UnsupportedLink(
+      'Links to a heading only work inside a document.',
+    );
   }
   if (path.endsWith('/')) {
     return const UnsupportedLink("Links to folders aren't supported yet.");
@@ -167,5 +175,6 @@ LinkTarget resolveLink(
     [root, ...segments].join('/'),
     startLine: start,
     endLine: end,
+    anchor: start == null ? anchor : null,
   );
 }

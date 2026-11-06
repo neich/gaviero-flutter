@@ -98,6 +98,7 @@ MaterialPageRoute<void> fileViewRoute(
     name: link.name,
     startLine: link.startLine,
     endLine: link.endLine,
+    anchor: link.anchor,
   ),
 );
 

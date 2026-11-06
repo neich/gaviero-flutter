@@ -100,11 +100,26 @@ void main() {
       expect((link.path, link.startLine), (_doc, 5));
     });
 
-    test('heading anchors open the file and ignore the anchor', () {
+    test('heading anchors carry the fragment', () {
       final link = _file(resolveLink('setup.md#install', fromFile: _doc));
-      expect((link.path, link.startLine), ('repo/docs/guide/setup.md', null));
-      expect(_reason(resolveLink('#install', fromFile: _doc)),
-          contains('headings'));
+      expect((link.path, link.startLine, link.anchor),
+          ('repo/docs/guide/setup.md', null, 'install'));
+      final here = _file(resolveLink('#getting-started', fromFile: _doc));
+      expect((here.path, here.anchor), (_doc, 'getting-started'));
+      final lines = _file(resolveLink('#L5', fromFile: _doc));
+      expect(lines.anchor, isNull);
+    });
+
+    test('a bare # is the top of the same document', () {
+      final link = _file(resolveLink('#', fromFile: _doc));
+      expect((link.path, link.startLine, link.anchor), (_doc, null, null));
+    });
+
+    test('a heading link in chat has no document to look in', () {
+      expect(_reason(resolveLink('#install', roots: ['repo'])),
+          contains('inside a document'));
+      final link = _file(resolveLink('README.md#install', roots: ['repo']));
+      expect((link.path, link.anchor), ('repo/README.md', 'install'));
     });
   });
 
