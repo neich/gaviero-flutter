@@ -136,16 +136,41 @@ and the desktop resolves the skill on send. `\$` stays literal. Needs a gaviero
 build that advertises `skill_completions` (protocol 1.8); older desktops simply
 show no suggestions.
 
+## Sections
+
+A bar at the top of every connected screen switches between **Files**,
+**Shells**, and **Conversations**; it stays visible over opened files and
+reviews too. Each section keeps its state while you are elsewhere — the
+expanded folders and open file, the selected shell tab and its unsent
+command, the conversation and scroll position — so switching back lands where
+you left off. A section is loaded the first time you open it; a hidden Shells
+section stops polling. After a reconnect, Files reopens the folders that were
+open and Shells returns to the same tab. Back closes what the section opened,
+then returns to Conversations. Picking another instance starts from fresh
+sections. Conversations shows a badge for permission requests while you are
+in another section.
+
 ## Explorer
 
-The folder icon in the app bar opens a read-only view of the desktop
-workspace. Root folders match the desktop explorer and `@` completion; tap a
+The **Files** section is a read-only view of the desktop workspace. Root folders match the desktop explorer and `@` completion; tap a
 folder to expand it (directories first, `.git` hidden) and tap a file to open
 it. Rust, TypeScript, and every other grammar-backed language are highlighted
 from the desktop's tree-sitter captures; Markdown opens in **Preview** with a
 **Raw** toggle. Files over 48 KiB show the first 48 KiB without highlighting,
 and binary files are not shown. Nothing here writes — there is no save,
-rename, or delete action. Needs a gaviero build that advertises the
+rename, or delete action.
+
+Links in a Markdown preview are followed. `http`, `https`, and `mailto`
+links (bare URLs too) open in the phone's browser or mail app; other schemes
+and paths on the computer's disk are refused with a message. Workspace links
+resolve against the open file (`/x` is the root of its workspace folder, and
+nothing climbs out of it) and open another viewer; Back returns to the
+previous one. A line target — `#L42`, `#L10-L20`, or `path:42` — scrolls to
+those lines and marks them, switching a Markdown file to **Raw**. Heading
+anchors (`#install`) open the file at the top, and folder links are not
+followed yet. Links in chat work the same way, read from the workspace root:
+a first segment naming a workspace folder picks it, anything else is read
+from the first folder, and the file opens in **Files**. Needs a gaviero build that advertises the
 `file_browser` capability; older desktops show an update hint and receive no
 requests.
 

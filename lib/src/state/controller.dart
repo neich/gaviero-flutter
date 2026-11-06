@@ -23,6 +23,11 @@ final class RemoteController extends ChangeNotifier {
   final DirectoryClient directoryClient;
   final RelayAlerts relayAlerts;
 
+  /// Bumped when a conversation is opened from outside the chat UI (a
+  /// notification tap, a deep link): the home screen switches to its
+  /// Conversations section.
+  final ValueNotifier<int> conversationFocus = ValueNotifier(0);
+
   InstanceRecord? _current;
   String? _needsPairingHost;
   final Set<String> _pagesInFlight = {};
@@ -273,6 +278,7 @@ final class RemoteController extends ChangeNotifier {
       await connect(inst);
     }
     state.view(convId);
+    conversationFocus.value++;
   }
 
   // -- actions ------------------------------------------------------------
@@ -482,6 +488,7 @@ final class RemoteController extends ChangeNotifier {
 
   @override
   void dispose() {
+    conversationFocus.dispose();
     connection.dispose();
     state.dispose();
     super.dispose();

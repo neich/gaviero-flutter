@@ -25,6 +25,9 @@ class _ExplorerScreenState extends State<ExplorerScreen> {
   final _children = <String, List<DirectoryEntry>>{};
   final _expanded = <String>{};
   final _loading = <String>{};
+  /// Folders that were open when the link dropped: reopened, parents first,
+  /// once the roots are back. The listings themselves are never kept.
+  final _reopen = <String>{};
   String? _error;
   bool _truncated = false;
   int _generation = 0;
@@ -45,9 +48,10 @@ class _ExplorerScreenState extends State<ExplorerScreen> {
     if (!mounted) return;
     final connected = _connected;
     if (!connected) {
-      // Drop everything: a stale tree from the previous instance must never
-      // be tappable after a reconnect.
+      // Drop the listings: a stale tree must never be tappable after a
+      // reconnect. Only the set of open folders survives, to be reopened.
       _generation++;
+      _reopen.addAll(_expanded);
       _roots.clear();
       _children.clear();
       _expanded.clear();
@@ -84,6 +88,7 @@ class _ExplorerScreenState extends State<ExplorerScreen> {
           _truncated = listing.truncated;
           _error = null;
         });
+        await _reopenFolders(generation);
       } else if (outcome is CommandFail) {
         setState(() => _error = outcome.error.message);
       } else {
@@ -96,7 +101,24 @@ class _ExplorerScreenState extends State<ExplorerScreen> {
     }
   }
 
-  Future<void> _loadChildren(String path) async {
+  /// Reopens [_reopen] shallowest first, so each folder's parent is listed
+  /// before it. A folder no longer in the tree is forgotten quietly; one left
+  /// over when the link drops again waits for the next reconnect.
+  Future<void> _reopenFolders(int generation) async {
+    while (_reopen.isNotEmpty) {
+      if (!mounted || generation != _generation) return;
+      final path = _reopen.reduce((a, b) => b.length < a.length ? b : a);
+      _reopen.remove(path);
+      final visible = _visibleRows().any(
+        (row) => row.entry.isDir && row.entry.path == path,
+      );
+      if (!visible) continue;
+      await _loadChildren(path, quiet: true);
+      if (generation != _generation) _reopen.add(path);
+    }
+  }
+
+  Future<void> _loadChildren(String path, {bool quiet = false}) async {
     if (!_connected || !_supported || _loading.contains(path)) return;
     final generation = _generation;
     final instanceId = _connection.instanceId;
@@ -119,12 +141,13 @@ class _ExplorerScreenState extends State<ExplorerScreen> {
           _error = null;
         });
       } else if (outcome is CommandFail) {
-        setState(() => _error = outcome.error.message);
+        // A reopened folder that is gone now is simply left closed.
+        if (!quiet) setState(() => _error = outcome.error.message);
       } else {
         setState(() => _error = 'Connection lost. Reconnecting…');
       }
     } catch (_) {
-      if (mounted && generation == _generation) {
+      if (mounted && generation == _generation && !quiet) {
         setState(() => _error = 'Unable to read this folder.');
       }
     } finally {
