@@ -18,6 +18,7 @@ import 'package:gpt_markdown/gpt_markdown.dart';
 
 import '../protocol/protocol.dart';
 import '../util/utf8_spans.dart';
+import 'link_actions.dart' show MarkdownLinks;
 import 'theme.dart';
 
 /// Provider framing for a reasoning block, written verbatim into the
@@ -232,18 +233,25 @@ class CodeBlockView extends StatelessWidget {
 }
 
 /// `GptMarkdown` with the app's wrapping code panel in place of the
-/// package's horizontally scrolling one.
+/// package's horizontally scrolling one. Links are tappable when
+/// [onLinkTap] is given or a [MarkdownLinks] scope is above.
 class MarkdownText extends StatelessWidget {
   final String data;
   final TextStyle? style;
+  final void Function(String href)? onLinkTap;
 
-  const MarkdownText(this.data, {super.key, this.style});
+  const MarkdownText(this.data, {super.key, this.style, this.onLinkTap});
 
   @override
   Widget build(BuildContext context) {
+    final scope = MarkdownLinks.maybeOf(context);
+    final onLink =
+        onLinkTap ??
+        (scope == null ? null : (String href) => scope.onTap(context, href));
     return GptMarkdown(
       data,
       style: style,
+      onLinkTap: onLink == null ? null : (url, _) => onLink(url),
       codeBuilder: (context, name, code, closed) =>
           // Rendered inside a WidgetSpan, which already scales its child.
           MediaQuery.withNoTextScaling(

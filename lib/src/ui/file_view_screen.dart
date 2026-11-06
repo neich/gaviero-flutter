@@ -1,25 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../protocol/protocol.dart';
 import '../state/controller.dart';
 import '../transport/connection.dart';
 import '../util/utf8_spans.dart';
+import 'link_actions.dart';
 import 'message_widgets.dart';
 import 'theme.dart';
 
 /// Read-only file view. Code is rendered from the server's tree-sitter
 /// capture classes; Markdown defaults to a rendered preview with a Raw
 /// toggle. There is deliberately no save/rename/delete affordance.
+///
+/// Links in the preview are followed: web links leave the app, workspace
+/// links (relative to this file) open another viewer, and a line target
+/// (`#L42`, `#L10-L20`) scrolls to those lines and marks them — in the Raw
+/// view for Markdown, where lines exist.
 class FileViewScreen extends StatefulWidget {
   final RemoteController controller;
   final String path;
   final String name;
+
+  /// 1-based line to scroll to and mark, through [endLine] when given.
+  final int? startLine;
+  final int? endLine;
 
   const FileViewScreen({
     super.key,
     required this.controller,
     required this.path,
     required this.name,
+    this.startLine,
+    this.endLine,
   });
 
   @override
@@ -29,8 +42,13 @@ class FileViewScreen extends StatefulWidget {
 class _FileViewScreenState extends State<FileViewScreen> {
   FileContent? _content;
   String? _error;
-  bool _preview = true;
+  late bool _preview = widget.startLine == null;
+  late int? _startLine = widget.startLine;
+  late int? _endLine = widget.endLine;
+  late bool _jumpPending = widget.startLine != null;
   int _generation = 0;
+  final _scroll = ScrollController();
+  final _textKey = GlobalKey();
 
   RemoteConnection get _connection => widget.controller.connection;
 
@@ -39,6 +57,63 @@ class _FileViewScreenState extends State<FileViewScreen> {
     super.initState();
     _connection.addListener(_connectionChanged);
     _load();
+  }
+
+  void _onLink(String href) {
+    followLink(
+      context,
+      widget.controller,
+      href,
+      fromFile: widget.path,
+      openFile: (link) {
+        if (link.path == widget.path) {
+          _showLines(link.startLine, link.endLine);
+        } else {
+          Navigator.of(context).push(fileViewRoute(widget.controller, link));
+        }
+      },
+    );
+  }
+
+  /// A link into this same file: mark and reveal the lines in place.
+  void _showLines(int? start, int? end) {
+    setState(() {
+      _startLine = start;
+      _endLine = end;
+      if (start != null) _preview = false;
+      _jumpPending = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jump());
+  }
+
+  /// Scrolls the marked first line near the top, a few lines of context
+  /// above it. Runs after layout: the offset comes from the laid-out text,
+  /// so wrapped lines are counted correctly.
+  void _jump() {
+    if (!mounted || !_jumpPending || !_scroll.hasClients) return;
+    _jumpPending = false;
+    final start = _startLine;
+    if (start == null) {
+      _scroll.jumpTo(0);
+      return;
+    }
+    final editable = _findEditable(_textKey.currentContext?.findRenderObject());
+    final viewport = editable == null
+        ? null
+        : RenderAbstractViewport.maybeOf(editable);
+    if (editable == null || viewport == null) return;
+    final text = editable.text?.toPlainText() ?? '';
+    final caret = editable.getLocalRectForCaret(
+      TextPosition(offset: _lineStart(text, start)),
+    );
+    final target = viewport.getOffsetToReveal(editable, 0, rect: caret).offset;
+    final position = _scroll.position;
+    _scroll.jumpTo(
+      (target - 3 * caret.height).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+    );
   }
 
   /// A file that failed while offline loads itself once the link is back.
@@ -63,6 +138,9 @@ class _FileViewScreenState extends State<FileViewScreen> {
           _content = content;
           _error = null;
         });
+        if (_jumpPending) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _jump());
+        }
       } else if (outcome is CommandFail) {
         setState(() => _error = outcome.error.message);
       } else {
@@ -78,6 +156,7 @@ class _FileViewScreenState extends State<FileViewScreen> {
   @override
   void dispose() {
     _connection.removeListener(_connectionChanged);
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -144,6 +223,7 @@ class _FileViewScreenState extends State<FileViewScreen> {
           ),
         Expanded(
           child: SingleChildScrollView(
+            controller: _scroll,
             padding: const EdgeInsets.all(12),
             child: _contentBody(content),
           ),
@@ -154,38 +234,46 @@ class _FileViewScreenState extends State<FileViewScreen> {
 
   Widget _contentBody(FileContent content) {
     if (content.isMarkdown && _preview) {
-      return MarkdownText(content.content);
-    }
-    if (content.isMarkdown) {
-      return _plainCode(content.content);
+      return MarkdownText(content.content, onLinkTap: _onLink);
     }
     return _code(content);
   }
 
+  /// Highlighted source (raw text for Markdown, or when the server sent no
+  /// spans), with the linked lines marked.
   Widget _code(FileContent file) {
-    final text = Utf8Text(file.content);
-    final List<InlineSpan> children;
-    if (file.spans.isEmpty) {
-      children = [TextSpan(text: file.content)];
+    final List<(String, TextStyle?)> runs;
+    if (file.isMarkdown || file.spans.isEmpty) {
+      runs = [(file.content, null)];
     } else {
-      final runs = classifyRuns(
-        text,
-        0,
-        text.byteLength,
-        file.spans.map(
-          (s) => (
-            startByte: s.startByte,
-            endByte: s.endByte,
-            className: s.className,
+      final text = Utf8Text(file.content);
+      runs = [
+        for (final run in classifyRuns(
+          text,
+          0,
+          text.byteLength,
+          file.spans.map(
+            (s) => (
+              startByte: s.startByte,
+              endByte: s.endByte,
+              className: s.className,
+            ),
           ),
-        ),
-      );
-      children = [
-        for (final run in runs)
-          TextSpan(text: run.text, style: highlightStyle(run.className)),
+        ))
+          (run.text, highlightStyle(run.className)),
       ];
     }
+    final start = _startLine;
+    final children = start == null
+        ? [for (final (text, style) in runs) TextSpan(text: text, style: style)]
+        : markLines(
+            runs,
+            start,
+            _endLine ?? start,
+            Theme.of(context).colorScheme.primary.withValues(alpha: 0.25),
+          );
     return SelectableText.rich(
+      key: _textKey,
       TextSpan(children: children),
       style: const TextStyle(
         fontFamily: codeFontFamily,
@@ -194,15 +282,66 @@ class _FileViewScreenState extends State<FileViewScreen> {
       ),
     );
   }
+}
 
-  Widget _plainCode(String content) => SelectableText(
-    content,
-    style: const TextStyle(
-      fontFamily: codeFontFamily,
-      fontSize: 13,
-      height: 1.4,
-    ),
-  );
+/// [runs] as spans, split at line ends so lines [first]..[last] (1-based,
+/// inclusive) carry a [background].
+List<TextSpan> markLines(
+  List<(String, TextStyle?)> runs,
+  int first,
+  int last,
+  Color background,
+) {
+  final spans = <TextSpan>[];
+  var line = 1;
+  for (final (text, style) in runs) {
+    var from = 0;
+    while (from < text.length) {
+      final newline = text.indexOf('\n', from);
+      final to = newline < 0 ? text.length : newline + 1;
+      final marked = line >= first && line <= last;
+      spans.add(
+        TextSpan(
+          text: text.substring(from, to),
+          style: marked
+              ? (style ?? const TextStyle()).copyWith(
+                  backgroundColor: background,
+                )
+              : style,
+        ),
+      );
+      if (newline >= 0) line++;
+      from = to;
+    }
+  }
+  return spans;
+}
+
+/// UTF-16 offset where 1-based [line] starts; the end of [text] when it has
+/// fewer lines (a truncated file).
+int _lineStart(String text, int line) {
+  var offset = 0;
+  for (var i = 1; i < line; i++) {
+    final newline = text.indexOf('\n', offset);
+    if (newline < 0) return text.length;
+    offset = newline + 1;
+  }
+  return offset;
+}
+
+RenderEditable? _findEditable(RenderObject? root) {
+  RenderEditable? found;
+  void visit(RenderObject node) {
+    if (found != null) return;
+    if (node is RenderEditable) {
+      found = node;
+    } else {
+      node.visitChildren(visit);
+    }
+  }
+
+  if (root != null) visit(root);
+  return found;
 }
 
 String _unviewableReason(String? reason) => switch (reason) {
