@@ -19,6 +19,9 @@ dependencies:
   # ntfy click → open the paired instance (remote-ntfy v1).
   # v7 matches Flutter 3.47 / Dart 3.13 and AGP 9.
   app_links: ^7.2.1
+  # Markdown web links open in the phone's browser / mail app. launchUrl is
+  # called directly (no canLaunchUrl), so no manifest <queries> are needed.
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

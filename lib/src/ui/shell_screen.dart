@@ -49,6 +49,8 @@ class _ShellScreenState extends State<ShellScreen>
   bool _sending = false;
   bool _fresh = false;
   bool _foreground = true;
+  /// False while another home section is showing: polling pauses.
+  bool? _visible;
   int _generation = 0;
 
   RemoteConnection get _connection => widget.controller.connection;
@@ -67,19 +69,30 @@ class _ShellScreenState extends State<ShellScreen>
     WidgetsBinding.instance.addObserver(this);
     _connection.addListener(_connectionChanged);
     _timer = Timer.periodic(const Duration(milliseconds: 750), (_) => _refresh());
-    _refresh();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The home screen keeps every section mounted (IndexedStack, which
+    // reports through Visibility.of); a hidden shell screen stops polling
+    // and catches up the moment it shows again.
+    final visible = Visibility.of(context);
+    if (visible != _visible) {
+      _visible = visible;
+      if (visible) _refresh();
+    }
   }
 
   void _connectionChanged() {
     if (!mounted) return;
     if (!_connected) {
+      // The screen is dropped until the link is back; the selected tab and
+      // its draft are kept, so a reconnect lands on the same shell.
       _generation++;
       _tabs = [];
-      _selected = null;
       _output = '';
       _fresh = false;
-      _drafts.clear();
-      _input.clear();
       _resetRecall();
     }
     setState(() {});
@@ -93,7 +106,13 @@ class _ShellScreenState extends State<ShellScreen>
   }
 
   Future<void> _refresh() async {
-    if (_polling || !_foreground || !_connected || !_supported) return;
+    if (_polling ||
+        !_foreground ||
+        _visible == false ||
+        !_connected ||
+        !_supported) {
+      return;
+    }
     _polling = true;
     final generation = _generation;
     final instanceId = _connection.instanceId;
@@ -111,6 +130,8 @@ class _ShellScreenState extends State<ShellScreen>
         final screen = result['screen'] as Map<String, Object?>?;
         setState(() {
           if (_selected != selected) {
+            // The server picked another tab (ours closed, or none yet).
+            if (_selected != null) _drafts[_selected!] = _input.text;
             _generation++;
             _input.text = _drafts[selected] ?? '';
             _resetRecall();

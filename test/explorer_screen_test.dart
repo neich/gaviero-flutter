@@ -1,9 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gaviero_remote/src/state/app_state.dart';
+import 'package:gaviero_remote/src/state/controller.dart';
+import 'package:gaviero_remote/src/transport/connection.dart';
 import 'package:gaviero_remote/src/ui/explorer_screen.dart';
 import 'package:gaviero_remote/src/ui/file_view_screen.dart';
 
 import 'every_tab_test.dart' show CapturingSocket, connected;
+import 'support/relay_machine.dart';
+
+Map<String, Object?> _hello() => {
+  'version': {'major': 1, 'minor': 1},
+  'instance_id': 'i1',
+  'seq': 1,
+  'revision': 1,
+  'type': 'hello',
+  'payload': {
+    'protocol_version': {'major': 1, 'minor': 1},
+    'instance_id': 'i1',
+    'tui_version': '0.1.0',
+    'workspace': {'id': 'w', 'display_name': 'w'},
+    'capabilities': ['file_browser'],
+    'confirm_required': <String>[],
+    'allowed_slash_commands': <String>[],
+    'limits': {
+      'max_frame_bytes': 262144,
+      'max_prompt_bytes': 131072,
+      'command_rate_per_second': 10,
+    },
+  },
+};
 
 /// Answers the most recent request of `type` with a `command_result`.
 final class _Replies {
@@ -131,6 +157,69 @@ void main() {
       socket.sent.where((f) => f['type'] == 'list_directory').length,
       sent,
     );
+
+    await _teardown(tester, controller);
+  });
+
+  testWidgets('a reconnect reopens the folders that were open', (
+    tester,
+  ) async {
+    final sockets = [CapturingSocket(), CapturingSocket()];
+    var next = 0;
+    final controller = RemoteController(
+      connection: RemoteConnection(
+        connector: (url, token) async => sockets[next++],
+      ),
+      state: AppState(),
+    );
+    Future<void> start(CapturingSocket socket) async {
+      await controller.connection.start(
+        Uri.parse('wss://h/v1/ws'),
+        't',
+        tlsCa: testTlsCa,
+        relayHost: testRelayHost,
+      );
+      socket.serverSend(_hello());
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    await tester.runAsync(() => start(sockets[0]));
+    var replies = _Replies(sockets[0]);
+    await tester.pumpWidget(
+      MaterialApp(home: ExplorerScreen(controller: controller)),
+    );
+    await tester.pump();
+    replies.reply('list_directory', _roots());
+    await tester.pump();
+    await tester.tap(find.text('repo'));
+    await tester.pump();
+    replies.reply('list_directory', _repoListing());
+    await tester.pump();
+    expect(find.text('src'), findsOneWidget);
+
+    await tester.runAsync(() => controller.connection.stop());
+    await tester.pump();
+    expect(find.text('src'), findsNothing);
+
+    // The reconnect (and so the explorer's requests) runs in the real async
+    // zone: answer there too.
+    await tester.runAsync(() => start(sockets[1]));
+    replies = _Replies(sockets[1]);
+    Future<void> answer(Map<String, Object?> listing) =>
+        tester.runAsync(() async {
+          replies.reply('list_directory', listing);
+          await Future<void>.delayed(Duration.zero);
+        });
+    await answer(_roots());
+    await tester.pump();
+    expect(find.text('repo'), findsOneWidget);
+    final reopen = sockets[1].sent.lastWhere(
+      (f) => f['type'] == 'list_directory',
+    );
+    expect((reopen['payload'] as Map)['path'], 'repo');
+    await answer(_repoListing());
+    await tester.pump();
+    expect(find.text('src'), findsOneWidget);
 
     await _teardown(tester, controller);
   });

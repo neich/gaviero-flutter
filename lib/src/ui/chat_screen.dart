@@ -9,12 +9,10 @@ import '../state/controller.dart';
 import '../transport/connection.dart';
 import 'composer.dart';
 import 'conversation_drawer.dart';
-import 'explorer_screen.dart';
 import 'feedback.dart';
 import 'message_widgets.dart';
 import 'permission_card.dart';
 import 'review_screen.dart';
-import 'shell_screen.dart';
 import 'turn_review_card.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -90,25 +88,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
               ],
             ),
+            // Files and Shells live in the home screen's section bar.
             actions: [
-              IconButton(
-                tooltip: 'Explorer',
-                icon: const Icon(Icons.folder_open),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ExplorerScreen(controller: controller),
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Shell sessions',
-                icon: const Icon(Icons.terminal),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ShellScreen(controller: controller),
-                  ),
-                ),
-              ),
               IconButton(
                 tooltip: 'Instances',
                 icon: const Icon(Icons.dns_outlined),

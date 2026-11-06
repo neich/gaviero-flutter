@@ -5,7 +5,7 @@ import 'src/services/deep_link.dart';
 import 'src/services/notifications.dart';
 import 'src/state/controller.dart';
 import 'src/transport/connection.dart';
-import 'src/ui/chat_screen.dart';
+import 'src/ui/home_screen.dart';
 import 'src/ui/instance_picker_screen.dart';
 import 'src/ui/pairing_screen.dart';
 import 'src/ui/theme.dart';
@@ -106,8 +106,14 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
               forMachine: needsHost ?? _controller.current?.machineHost,
             );
           }
-          if (_controller.current != null) {
-            return ChatScreen(controller: _controller);
+          final current = _controller.current;
+          if (current != null) {
+            // Keyed by instance: another workspace starts from fresh
+            // sections instead of the previous one's tree and shell tabs.
+            return HomeScreen(
+              key: ValueKey(current.key),
+              controller: _controller,
+            );
           }
           return InstancePickerScreen(controller: _controller);
         },
