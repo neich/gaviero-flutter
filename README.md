@@ -126,6 +126,16 @@ desktop reads that file into the prompt on send. Needs a gaviero build that
 advertises the `file_completions` capability — older desktops simply show no
 suggestions.
 
+## `$` skills
+
+Typing `$` and at least two letters lists matching skills from the desktop's
+catalog, each with its description (same matcher and ranking as the desktop
+popup). Tapping one inserts exactly what the desktop would — `$name`,
+`$label/name` when two scopes share the name, `()` when it takes arguments —
+and the desktop resolves the skill on send. `\$` stays literal. Needs a gaviero
+build that advertises `skill_completions` (protocol 1.8); older desktops simply
+show no suggestions.
+
 ## Explorer
 
 The folder icon in the app bar opens a read-only view of the desktop

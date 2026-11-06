@@ -171,8 +171,18 @@ void main() {
       });
     }
 
-    test('there is a fixture for all 19 client frame types', () {
-      expect(fixtureNames('client'), hasLength(19));
+    test('there is a fixture for all 20 client frame types', () {
+      expect(fixtureNames('client'), hasLength(20));
+    });
+
+    test('1.8 request_skill_completions decodes; null limit is omitted', () {
+      final request = ClientEnvelope.fromJson(
+        readFixture('client', 'request_skill_completions'),
+      ).payload as RequestSkillCompletions;
+      expect(request.query, 'rev');
+      expect(request.limit, 10);
+      expect(const RequestSkillCompletions(query: 'li').toPayloadJson(),
+          {'query': 'li'});
     });
 
     test('list_directory without a path omits the key', () {

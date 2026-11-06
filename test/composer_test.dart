@@ -416,4 +416,127 @@ void main() {
       expect(find.byKey(const Key('file-suggestions')), findsNothing);
     });
   });
+
+  group(r'$ skill completion', () {
+    test('skillReferenceAt follows the desktop token rule', () {
+      expect(skillReferenceAt(r'run $re', 7), (start: 4, query: 're'));
+      expect(skillReferenceAt(r'$lint', 5), (start: 0, query: 'lint'));
+      expect(skillReferenceAt('line\n\$rev', 9), (start: 5, query: 'rev'));
+      expect(skillReferenceAt(r'$r', 2), isNull,
+          reason: 'two characters before asking, like the desktop');
+      expect(skillReferenceAt(r'$', 1), isNull);
+      expect(skillReferenceAt(r'cost a$re', 9), isNull);
+      expect(skillReferenceAt(r'run \$lint', 10), isNull,
+          reason: r'an escaped \$ is literal');
+      expect(skillReferenceAt(r'$lint done', 10), isNull);
+      expect(skillReferenceAt(r'/model $re', 10), isNull);
+    });
+
+    List<Map<String, Object?>> skillRequests(CapturingSocket socket) => socket
+        .sent
+        .where((f) => f['type'] == 'request_skill_completions')
+        .toList();
+
+    Future<void> reply(WidgetTester tester, CapturingSocket socket,
+        Map<String, Object?> request, List<Map<String, Object?>> skills) async {
+      await tester.runAsync(() async {
+        socket.serverSend({
+          'version': {'major': 1, 'minor': 8},
+          'instance_id': 'i1',
+          'seq': _seq++,
+          'revision': 1,
+          'type': 'command_result',
+          'payload': {
+            'command_id': request['command_id'],
+            'status': 'completed',
+            'result': {
+              'query': (request['payload'] as Map)['query'],
+              'skills': skills,
+            },
+          },
+        });
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('suggestions show descriptions and a tap inserts the skill',
+        (tester) async {
+      final (controller, socket) = (await tester.runAsync(
+        () => connectedController(
+            capabilities: ['file_completions', 'skill_completions']),
+      ))!;
+      await tester.pumpWidget(host(controller));
+
+      await tester.enterText(find.byType(TextField), r'please $re');
+      await tester.pump(const Duration(milliseconds: 200));
+      final request = skillRequests(socket).single;
+      expect(request['payload'], {'query': 're'});
+
+      await reply(tester, socket, request, [
+        {
+          'insert': r'$review()',
+          'name': 'review',
+          'description': 'Review the diff',
+          'argument_hint': '<path>',
+        },
+        {'insert': r'$release', 'name': 'release', 'description': ''},
+      ]);
+      expect(find.byKey(const Key('skill-suggestions')), findsOneWidget);
+      expect(find.text(r'$review()'), findsOneWidget);
+      expect(find.text('Review the diff'), findsOneWidget);
+      expect(find.text(r'$release'), findsOneWidget);
+      expect(find.widgetWithText(ActionChip, '/model'), findsNothing);
+
+      await tester.tap(find.text(r'$review()'));
+      await tester.pump();
+      expect(find.widgetWithText(TextField, r'please $review() '),
+          findsOneWidget);
+      expect(find.byKey(const Key('skill-suggestions')), findsNothing);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(skillRequests(socket), hasLength(1));
+      expect(
+          socket.sent.where((f) => f['type'] == 'request_file_completions'),
+          isEmpty);
+    });
+
+    testWidgets('a reply for a query typed past is dropped', (tester) async {
+      final (controller, socket) = (await tester.runAsync(
+        () => connectedController(capabilities: ['skill_completions']),
+      ))!;
+      await tester.pumpWidget(host(controller));
+
+      await tester.enterText(find.byType(TextField), r'$re');
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.enterText(find.byType(TextField), r'$rev');
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(skillRequests(socket), hasLength(1));
+
+      await reply(tester, socket, skillRequests(socket).first, [
+        {'insert': r'$release', 'name': 'release', 'description': ''},
+      ]);
+      expect(find.text(r'$release'), findsNothing);
+      final second = skillRequests(socket);
+      expect(second, hasLength(2));
+      expect(second.last['payload'], {'query': 'rev'});
+
+      await reply(tester, socket, second.last, [
+        {'insert': r'$review', 'name': 'review', 'description': 'Review'},
+      ]);
+      expect(find.text(r'$review'), findsOneWidget);
+    });
+
+    testWidgets('a server without skill_completions gets no requests',
+        (tester) async {
+      final (controller, socket) = (await tester.runAsync(
+        () => connectedController(capabilities: ['file_completions']),
+      ))!;
+      await tester.pumpWidget(host(controller));
+      await tester.enterText(find.byType(TextField), r'run $lint');
+      await tester.pump(const Duration(seconds: 1));
+      expect(skillRequests(socket), isEmpty);
+      expect(find.byKey(const Key('skill-suggestions')), findsNothing);
+    });
+  });
 }
