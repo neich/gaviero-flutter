@@ -166,9 +166,13 @@ and paths on the computer's disk are refused with a message. Workspace links
 resolve against the open file (`/x` is the root of its workspace folder, and
 nothing climbs out of it) and open another viewer; Back returns to the
 previous one. A line target — `#L42`, `#L10-L20`, or `path:42` — scrolls to
-those lines and marks them, switching a Markdown file to **Raw**. Heading
-anchors (`#install`) open the file at the top, and folder links are not
-followed yet. Links in chat work the same way, read from the workspace root:
+those lines and marks them, switching a Markdown file to **Raw**. A heading
+anchor — `#install` in the same document, or `setup.md#install` — scrolls
+the **Preview** to that heading (GitHub-style slugs: lower case, punctuation
+dropped, spaces as hyphens, repeats numbered `-1`, `-2`; the heading text
+itself also works); `#` alone goes back to the top, and an anchor with no
+matching heading says so. Folder links are not followed yet. Links in chat
+work the same way, read from the workspace root:
 a first segment naming a workspace folder picks it, anything else is read
 from the first folder, and the file opens in **Files**. Needs a gaviero build that advertises the
 `file_browser` capability; older desktops show an update hint and receive no

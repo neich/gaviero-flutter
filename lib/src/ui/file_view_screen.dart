@@ -4,6 +4,8 @@ import 'package:flutter/rendering.dart';
 import '../protocol/protocol.dart';
 import '../state/controller.dart';
 import '../transport/connection.dart';
+import '../util/links.dart';
+import '../util/markdown_anchors.dart';
 import '../util/utf8_spans.dart';
 import 'link_actions.dart';
 import 'message_widgets.dart';
@@ -14,9 +16,10 @@ import 'theme.dart';
 /// toggle. There is deliberately no save/rename/delete affordance.
 ///
 /// Links in the preview are followed: web links leave the app, workspace
-/// links (relative to this file) open another viewer, and a line target
+/// links (relative to this file) open another viewer, a line target
 /// (`#L42`, `#L10-L20`) scrolls to those lines and marks them — in the Raw
-/// view for Markdown, where lines exist.
+/// view for Markdown, where lines exist — and a heading anchor (`#install`)
+/// scrolls the preview to that heading.
 class FileViewScreen extends StatefulWidget {
   final RemoteController controller;
   final String path;
@@ -26,6 +29,9 @@ class FileViewScreen extends StatefulWidget {
   final int? startLine;
   final int? endLine;
 
+  /// Heading to scroll to in a Markdown preview (a link's `#fragment`).
+  final String? anchor;
+
   const FileViewScreen({
     super.key,
     required this.controller,
@@ -33,6 +39,7 @@ class FileViewScreen extends StatefulWidget {
     required this.name,
     this.startLine,
     this.endLine,
+    this.anchor,
   });
 
   @override
@@ -45,10 +52,15 @@ class _FileViewScreenState extends State<FileViewScreen> {
   late bool _preview = widget.startLine == null;
   late int? _startLine = widget.startLine;
   late int? _endLine = widget.endLine;
-  late bool _jumpPending = widget.startLine != null;
+  late String? _anchor = widget.startLine == null ? widget.anchor : null;
+  late bool _jumpPending = widget.startLine != null || _anchor != null;
   int _generation = 0;
   final _scroll = ScrollController();
   final _textKey = GlobalKey();
+
+  /// The Markdown preview, one widget per heading so links can reach them.
+  List<MarkdownSection> _sections = const [];
+  List<GlobalKey> _sectionKeys = const [];
 
   RemoteConnection get _connection => widget.controller.connection;
 
@@ -67,7 +79,7 @@ class _FileViewScreenState extends State<FileViewScreen> {
       fromFile: widget.path,
       openFile: (link) {
         if (link.path == widget.path) {
-          _showLines(link.startLine, link.endLine);
+          _showTarget(link);
         } else {
           Navigator.of(context).push(fileViewRoute(widget.controller, link));
         }
@@ -75,12 +87,19 @@ class _FileViewScreenState extends State<FileViewScreen> {
     );
   }
 
-  /// A link into this same file: mark and reveal the lines in place.
-  void _showLines(int? start, int? end) {
+  /// A link into this same file: reveal its heading in the preview, or
+  /// mark and reveal its lines in place (the top for a bare `#`).
+  void _showTarget(FileLink link) {
     setState(() {
-      _startLine = start;
-      _endLine = end;
-      if (start != null) _preview = false;
+      if (link.anchor case final anchor?) {
+        _anchor = anchor;
+        _preview = true;
+      } else {
+        _anchor = null;
+        _startLine = link.startLine;
+        _endLine = link.endLine;
+        if (link.startLine != null) _preview = false;
+      }
       _jumpPending = true;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _jump());
@@ -92,6 +111,11 @@ class _FileViewScreenState extends State<FileViewScreen> {
   void _jump() {
     if (!mounted || !_jumpPending || !_scroll.hasClients) return;
     _jumpPending = false;
+    final anchor = _anchor;
+    if (anchor != null && _preview && _content?.isMarkdown == true) {
+      _jumpToHeading(anchor);
+      return;
+    }
     final start = _startLine;
     if (start == null) {
       _scroll.jumpTo(0);
@@ -116,6 +140,21 @@ class _FileViewScreenState extends State<FileViewScreen> {
     );
   }
 
+  /// Puts the heading [anchor] names at the top of the preview.
+  void _jumpToHeading(String anchor) {
+    final index = findSection(_sections, anchor);
+    final target = index == null ? null : _sectionKeys[index].currentContext;
+    if (target == null) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('No heading “#$anchor” in this document.')),
+        );
+      return;
+    }
+    Scrollable.ensureVisible(target);
+  }
+
   /// A file that failed while offline loads itself once the link is back.
   void _connectionChanged() {
     if (!mounted) return;
@@ -134,9 +173,14 @@ class _FileViewScreenState extends State<FileViewScreen> {
         final content = FileContent.fromJson(
           outcome.result.result as Map<String, Object?>,
         );
+        final sections = content.isMarkdown
+            ? splitAtHeadings(content.content)
+            : const <MarkdownSection>[];
         setState(() {
           _content = content;
           _error = null;
+          _sections = sections;
+          _sectionKeys = [for (final _ in sections) GlobalKey()];
         });
         if (_jumpPending) {
           WidgetsBinding.instance.addPostFrameCallback((_) => _jump());
@@ -234,7 +278,22 @@ class _FileViewScreenState extends State<FileViewScreen> {
 
   Widget _contentBody(FileContent content) {
     if (content.isMarkdown && _preview) {
-      return MarkdownText(content.content, onLinkTap: _onLink);
+      if (_sections.length < 2) {
+        return KeyedSubtree(
+          key: _sectionKeys.firstOrNull,
+          child: MarkdownText(content.content, onLinkTap: _onLink),
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (i, section) in _sections.indexed)
+            KeyedSubtree(
+              key: _sectionKeys[i],
+              child: MarkdownText(section.text, onLinkTap: _onLink),
+            ),
+        ],
+      );
     }
     return _code(content);
   }

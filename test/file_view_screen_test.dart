@@ -364,6 +364,74 @@ void main() {
       expect(marked, ['second\n']);
       await _teardown(tester, controller);
     });
+
+    String longDoc() => [
+      'Jump to [the middle](#part-20) or [nowhere](#nope).',
+      for (var i = 1; i <= 40; i++) '## Part $i\n\nfiller $i\n',
+      '## The End\n\nlast words',
+    ].join('\n');
+
+    testWidgets('#heading in the same document scrolls the preview to it', (
+      tester,
+    ) async {
+      final (controller, socket, _) = await openDoc(tester, longDoc());
+      final reads = socket.sent.where((f) => f['type'] == 'read_file').length;
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable).first,
+      );
+      expect(scrollable.position.pixels, 0);
+      await tester.tapOnText(find.textRange.ofSubstring('the middle'));
+      await tester.pump();
+      await tester.pump();
+      expect(scrollable.position.pixels, greaterThan(0));
+      final heading = tester.getTopLeft(
+        find.textContaining('Part 20', findRichText: true).first,
+      );
+      final view = tester.getTopLeft(find.byType(Scrollable).first);
+      expect(heading.dy - view.dy, inInclusiveRange(0, 60));
+      expect(socket.sent.where((f) => f['type'] == 'read_file').length, reads);
+      await _teardown(tester, controller);
+    });
+
+    testWidgets('a missing heading explains itself', (tester) async {
+      final (controller, _, _) = await openDoc(tester, longDoc());
+      await tester.tapOnText(find.textRange.ofSubstring('nowhere'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('No heading “#nope”'), findsOneWidget);
+      await _teardown(tester, controller);
+    });
+
+    testWidgets('a heading in another document opens it there', (
+      tester,
+    ) async {
+      final (controller, socket, replies) = await openDoc(
+        tester,
+        'See [its end](other.md#the-end).',
+      );
+      await tester.tapOnText(find.textRange.ofSubstring('its end'));
+      // `#the-end` is the last heading: it scrolls as far as the page goes.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      final viewer = tester.widget<FileViewScreen>(
+        find.byType(FileViewScreen).last,
+      );
+      expect((viewer.path, viewer.anchor), ('repo/docs/other.md', 'the-end'));
+      replies.file(
+        _content(
+          path: 'repo/docs/other.md',
+          language: 'markdown',
+          content: longDoc(),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable).last,
+      );
+      expect(scrollable.position.pixels, greaterThan(0));
+      await _teardown(tester, controller);
+    });
   });
 
   testWidgets('a line target scrolls the code to that line and marks it', (
