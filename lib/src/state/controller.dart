@@ -453,6 +453,16 @@ final class RemoteController extends ChangeNotifier {
     return connection.send(RequestFileCompletions(query: query));
   }
 
+  /// Catalog skills for a `$skill` invocation; dropped without sending on a
+  /// server lacking [Capability.skillCompletions].
+  Future<CommandOutcome> requestSkillCompletions(String query) {
+    if (!(connection.hello?.hasCapability(Capability.skillCompletions) ??
+        false)) {
+      return Future.value(const CommandDropped());
+    }
+    return connection.send(RequestSkillCompletions(query: query));
+  }
+
   /// The server advertises [Capability.fileBrowser]: the explorer may send
   /// `list_directory` / `read_file`.
   bool get supportsFileBrowser =>

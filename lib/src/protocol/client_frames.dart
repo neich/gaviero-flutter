@@ -1,4 +1,4 @@
-/// Client → server frame payloads (19 types).
+/// Client → server frame payloads (20 types).
 library;
 
 import 'dto.dart' show PermissionGrant;
@@ -43,6 +43,10 @@ sealed class ClientPayload {
         'list_directory' => ListDirectory(path: json['path'] as String?),
         'read_file' => ReadFile(path: json['path'] as String),
         'turn_review_action' => TurnReviewAction.fromJson(json),
+        'request_skill_completions' => RequestSkillCompletions(
+          query: json['query'] as String,
+          limit: json['limit'] as int?,
+        ),
         _ => throw FormatException('unknown client frame type: $type'),
       };
 }
@@ -92,6 +96,29 @@ final class RequestFileCompletions extends ClientPayload {
 
   @override
   String get frameType => 'request_file_completions';
+
+  @override
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{'query': query};
+    _put(map, 'limit', limit);
+    return map;
+  }
+}
+
+/// Requires [Capability.skillCompletions] (1.8). The completed result is
+/// `{query, skills: [{insert, name, description, argument_hint?}]}`, where
+/// `insert` is the exact text the desktop popup would insert.
+final class RequestSkillCompletions extends ClientPayload {
+  /// Skill-name prefix typed after `$`, without the `$`. At most 1024 bytes.
+  final String query;
+
+  /// Clamped server-side to 1–50; null ⇒ omitted ⇒ 10.
+  final int? limit;
+
+  const RequestSkillCompletions({required this.query, this.limit});
+
+  @override
+  String get frameType => 'request_skill_completions';
 
   @override
   Map<String, Object?> toPayloadJson() {
