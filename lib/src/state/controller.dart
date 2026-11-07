@@ -1,5 +1,7 @@
-/// Wires the connection, the mirror state, and instance storage together and
-/// exposes the high-level actions the UI calls. Freshness tokens (§3.5) are
+/// One instance's session: its connection, its mirror state, and the
+/// high-level actions the screens call. [RemoteHub] owns one per recently
+/// used instance, so leaving an instance and coming back finds the same
+/// conversations, drafts and section state. Freshness tokens (§3.5) are
 /// attached here: `conv_revision` on rename/reset, `proposal_revision` on
 /// review actions, `request_id` on permission decisions.
 library;
@@ -9,53 +11,37 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../protocol/protocol.dart';
-import '../services/directory_client.dart';
-import '../services/relay_alerts.dart';
 import '../services/instance_store.dart';
-import '../services/secure_store.dart';
 import '../transport/connection.dart';
 import 'app_state.dart';
 
 final class RemoteController extends ChangeNotifier {
   final RemoteConnection connection;
   final AppState state;
-  final InstanceStore instanceStore;
-  final DirectoryClient directoryClient;
-  final RelayAlerts relayAlerts;
 
   /// Bumped when a conversation is opened from outside the chat UI (a
   /// notification tap, a deep link): the home screen switches to its
   /// Conversations section.
   final ValueNotifier<int> conversationFocus = ValueNotifier(0);
 
+  /// Every `hello`, before the state sees it: the hub records the
+  /// workspace id and name it carries.
+  void Function(Hello hello)? onHello;
+
   InstanceRecord? _current;
-  String? _needsPairingHost;
+  bool _disposed = false;
   final Set<String> _pagesInFlight = {};
   final Set<String> _newestInFlight = {};
 
   RemoteController({
     RemoteConnection? connection,
     AppState? state,
-    InstanceStore? instanceStore,
-    DirectoryClient? directoryClient,
-    RelayAlerts? relayAlerts,
+    InstanceRecord? instance,
   }) : connection = connection ?? RemoteConnection(),
        state = state ?? AppState(),
-       instanceStore = instanceStore ?? InstanceStore(),
-       directoryClient = directoryClient ?? DirectoryClient(),
-       relayAlerts = relayAlerts ?? RelayAlerts() {
+       _current = instance {
     this.connection.onEnvelope = _onEnvelope;
     this.connection.onInstanceChanged = this.state.clear;
-    this.connection.onTokenInvalid = () async {
-      final host = _current?.machineHost;
-      if (host != null) {
-        await this.instanceStore.markMachineNeedsPairing(host);
-        unawaited(this.relayAlerts.sync(this.instanceStore.doc));
-      }
-      _needsPairingHost = host;
-      _current = null;
-      notifyListeners();
-    };
     this.state.onNeedNewestPage = (convId) {
       requestNewestPage(convId);
     };
@@ -63,222 +49,20 @@ final class RemoteController extends ChangeNotifier {
     this.state.addListener(notifyListeners);
   }
 
+  /// The instance this session belongs to (null in screen tests).
   InstanceRecord? get current => _current;
-  String? get needsPairingHost => _needsPairingHost;
-  bool get isPaired => instanceStore.doc.machines.isNotEmpty;
 
-  /// Loads stored instances, refreshes the machine directory so online
-  /// status and URLs are current, then reconnects to
-  /// [StoreDocument.lastInstance] when present.
-  Future<bool> initialize() async {
-    await instanceStore.load();
-    unawaited(relayAlerts.sync(instanceStore.doc));
-    // Doze holds the relay stream until the app is opened unless this
-    // exemption was granted. Pairing asks too; a dismissed dialog is asked
-    // again on the next cold start, and the activity no-ops once granted.
-    if (instanceStore.doc.machines.any(
-      (m) => m.relayHost != null && m.relaySecret != null && !m.needsPairing,
-    )) {
-      unawaited(relayAlerts.requestBatteryExemption());
-    }
+  /// The hub learned newer details (a `hello`, a directory refresh).
+  void updateInstance(InstanceRecord instance) {
+    _current = instance;
     notifyListeners();
-    await refreshDirectory();
-    final last = instanceStore.doc.lastInstance;
-    if (last == null) return false;
-    final inst = instanceStore.instance(last);
-    if (inst == null) return false;
-    await connect(inst);
-    return true;
-  }
-
-  Future<void> pair(PairingConfig config) async {
-    final host = config.machineHost;
-    await instanceStore.upsertMachine(
-      MachineRecord(
-        host: host,
-        token: config.token,
-        directoryUrl: config.directoryUrl,
-        pairedAt: DateTime.now().toUtc().toIso8601String(),
-        needsPairing: false,
-        tlsCa: config.tlsCa,
-        relayHost: config.relayHost,
-        relaySecret: config.relaySecret,
-      ),
-    );
-    final inst = InstanceRecord(
-      machineHost: host,
-      workspaceId: config.workspaceId,
-      displayName: config.workspace.isEmpty ? host : config.workspace,
-      url: config.url,
-    );
-    await instanceStore.upsertInstance(inst);
-    // The relay alert service stays reliable under OEM battery managers only
-    // with the exemption (asked once per pairing).
-    unawaited(relayAlerts.sync(instanceStore.doc));
-    unawaited(relayAlerts.requestBatteryExemption());
-    _needsPairingHost = null;
-    notifyListeners();
-    await connect(inst);
-  }
-
-  /// Replace the token of a machine paired by QR earlier — manual entry
-  /// cannot carry the CA or the relay fields, so it can't pair a new one.
-  /// Directory refresh then fills in running instances.
-  Future<void> pairMachineOnly(String host, String token) async {
-    final existing = instanceStore.machine(host);
-    if (existing == null) {
-      throw const PairingError(
-          'Scan the QR code from /remote first. Manual entry only replaces '
-          'the token of a machine that is already paired.');
-    }
-    await instanceStore.upsertMachine(
-      existing.copyWith(
-        token: token,
-        pairedAt: DateTime.now().toUtc().toIso8601String(),
-        needsPairing: false,
-      ),
-    );
-    _needsPairingHost = null;
-    notifyListeners();
-    await refreshDirectory();
-  }
-
-  Future<void> connect(InstanceRecord inst) async {
-    final switched = _current?.key != inst.key;
-    final moved = _current?.url != inst.url;
-    if (switched || moved) {
-      await connection.stop();
-      if (switched) state.clear();
-    }
-    _current = inst;
-    _needsPairingHost = null;
-    await instanceStore.setLastInstance(inst.key);
-    notifyListeners();
-    final machine = instanceStore.machine(inst.machineHost);
-    if (machine == null || machine.needsPairing) return;
-    if (!switched &&
-        !moved &&
-        (connection.isConnected ||
-            connection.phase == ConnectionPhase.connecting ||
-            connection.phase == ConnectionPhase.handshaking)) {
-      return;
-    }
-    await connection.start(
-      Uri.parse(inst.url),
-      machine.token,
-      tlsCa: machine.tlsCa,
-      relayHost: machine.relayHost,
-    );
-  }
-
-  Future<void> disconnect() async {
-    await connection.stop();
-    _current = null;
-    state.clear();
-    notifyListeners();
-  }
-
-  Future<void> refreshDirectory() async {
-    await directoryClient.refresh(instanceStore);
-    notifyListeners();
-  }
-
-  Future<void> forgetInstance(InstanceKey key) async {
-    if (_current?.key == key) await disconnect();
-    await instanceStore.forgetInstance(key);
-    notifyListeners();
-  }
-
-  Future<void> forgetMachine(String host) async {
-    if (_current?.machineHost == host) await disconnect();
-    await instanceStore.forgetMachine(host);
-    unawaited(relayAlerts.sync(instanceStore.doc));
-    if (_needsPairingHost == host) _needsPairingHost = null;
-    notifyListeners();
-  }
-
-  /// App resumed from background: a dead socket is routine (the server culls
-  /// after 60 s without traffic). Refresh the directory first so an instance
-  /// whose URL changed while we were away is followed; otherwise reconnect
-  /// silently.
-  Future<void> onAppResumed() async {
-    final current = _current;
-    if (current == null) {
-      await refreshDirectory();
-      return;
-    }
-    final key = current.key;
-    final previousUrl = current.url;
-    await refreshDirectory();
-    final updated = instanceStore.instance(key);
-    if (updated != null && updated.url != previousUrl) {
-      await connect(updated);
-      return;
-    }
-    await connection.resume();
   }
 
   void _onEnvelope(ServerEnvelope envelope) {
     if (envelope.payload case final Hello hello) {
-      _applyHello(hello);
+      onHello?.call(hello);
     }
     state.applyEnvelope(envelope);
-  }
-
-  void _applyHello(Hello hello) {
-    final current = _current;
-    if (current == null) return;
-    final updated = current.copyWith(
-      workspaceId: hello.workspace.id,
-      displayName: hello.workspace.displayName,
-    );
-    _current = updated;
-    unawaited(
-      instanceStore
-          .upsertInstance(updated)
-          .then((_) => relayAlerts.sync(instanceStore.doc)),
-    );
-    final machine = instanceStore.machine(current.machineHost);
-    final directoryUrl = hello.machine?.directoryUrl;
-    if (machine != null && directoryUrl != null) {
-      unawaited(
-        instanceStore.upsertMachine(
-          machine.copyWith(directoryUrl: directoryUrl),
-        ),
-      );
-    }
-  }
-
-  Future<void> openNotificationTarget({
-    required String machineHost,
-    required String workspaceId,
-    required String convId,
-  }) async {
-    final key = InstanceKey(
-      machineHost,
-      workspaceId.isEmpty ? null : workspaceId,
-    );
-    var inst = instanceStore.instance(key);
-    if (inst == null) {
-      for (final i in instanceStore.doc.instances) {
-        if (i.machineHost == machineHost &&
-            (workspaceId.isEmpty || i.workspaceId == workspaceId)) {
-          inst = i;
-          break;
-        }
-      }
-    }
-    if (inst == null) {
-      // Unpaired / unknown instance: drop the current socket so the
-      // picker (or pairing screen) is what the user sees.
-      if (_current != null) await disconnect();
-      return;
-    }
-    if (_current?.key != inst.key) {
-      await connect(inst);
-    }
-    state.view(convId);
-    conversationFocus.value++;
   }
 
   // -- actions ------------------------------------------------------------
@@ -488,6 +272,10 @@ final class RemoteController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    connection.removeListener(notifyListeners);
+    state.removeListener(notifyListeners);
     conversationFocus.dispose();
     connection.dispose();
     state.dispose();

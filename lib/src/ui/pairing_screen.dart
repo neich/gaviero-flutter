@@ -7,11 +7,11 @@ import 'package:flutter/material.dart';
 
 import '../protocol/version.dart';
 import '../services/secure_store.dart';
-import '../state/controller.dart';
+import '../state/hub.dart';
 import 'scanner_screen.dart';
 
 class PairingScreen extends StatefulWidget {
-  final RemoteController controller;
+  final RemoteHub controller;
 
   /// When set, this is a re-pair for a machine whose token died (4001/4006).
   final String? forMachine;

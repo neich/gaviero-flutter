@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gaviero_remote/src/services/directory_client.dart';
 import 'package:gaviero_remote/src/services/instance_store.dart';
 import 'package:gaviero_remote/src/services/kv.dart';
-import 'package:gaviero_remote/src/state/controller.dart';
+import 'package:gaviero_remote/src/state/hub.dart';
 import 'package:gaviero_remote/src/transport/connection.dart';
 
 import 'support/relay_machine.dart';
@@ -40,7 +40,7 @@ void main() {
       );
       var fetches = 0;
       final connected = <Uri>[];
-      final controller = RemoteController(
+      final controller = RemoteHub(
         instanceStore: store,
         directoryClient: DirectoryClient(
           fetch: (url, token) async {
@@ -66,7 +66,7 @@ void main() {
             );
           },
         ),
-        connection: RemoteConnection(
+        connectionFactory: () => RemoteConnection(
           connector: (url, token) async {
             connected.add(url);
             throw StateError('offline');
@@ -74,16 +74,16 @@ void main() {
         ),
       );
       await controller.connect(store.doc.instances.single);
-      await controller.connection.stop();
+      await controller.session!.connection.stop();
       connected.clear();
       await controller.onAppResumed();
       expect(fetches, 1);
       expect(connected, [Uri.parse('wss://ws2-alpha/v1/ws')]);
-      await controller.connection.stop();
+      await controller.session!.connection.stop();
     },
   );
 
-  test('openNotificationTarget disconnects when the instance is unknown',
+  test('openNotificationTarget shows the picker over an unknown instance',
       () async {
     final store = InstanceStore(kv: MemoryKv());
     store.doc = StoreDocument(
@@ -107,25 +107,27 @@ void main() {
         ),
       ],
     );
-    final controller = RemoteController(
+    final controller = RemoteHub(
       instanceStore: store,
       directoryClient: DirectoryClient(
         fetch: (url, token) async => const DirectoryFetchResult(404, ''),
       ),
-      connection: RemoteConnection(
+      connectionFactory: () => RemoteConnection(
         connector: (url, token) async {
           throw StateError('offline');
         },
       ),
     );
     await controller.connect(store.doc.instances.single);
-    await controller.connection.stop();
+    await controller.session!.connection.stop();
     expect(controller.current, isNotNull);
     await controller.openNotificationTarget(
       machineHost: 'other.gaviero.example.com',
       workspaceId: 'nope',
       convId: 'c1',
     );
-    expect(controller.current, isNull);
+    // The current session is kept behind the picker.
+    expect(controller.showingInstances, isTrue);
+    expect(controller.current?.workspaceId, 'ws');
   });
 }

@@ -1,5 +1,7 @@
-/// Instance picker (Plan D D3): home screen. Machines as sections, one row
-/// per known instance, pull-to-refresh, tap to connect, long-press to forget.
+/// Instance picker (Plan D D3). Machines as sections, one row per known
+/// instance, pull-to-refresh, tap to connect, long-press to forget. Opened
+/// from any section's bar it covers the current instance, which stays
+/// connected and is marked here; Back returns to it unchanged.
 library;
 
 import 'package:flutter/material.dart';
@@ -7,12 +9,12 @@ import 'package:flutter/material.dart';
 import '../protocol/version.dart';
 import '../services/instance_store.dart';
 import '../services/secure_store.dart';
-import '../state/controller.dart';
+import '../state/hub.dart';
 import 'pairing_screen.dart';
 import 'scanner_screen.dart';
 
 class InstancePickerScreen extends StatefulWidget {
-  final RemoteController controller;
+  final RemoteHub controller;
 
   const InstancePickerScreen({super.key, required this.controller});
 
@@ -23,7 +25,7 @@ class InstancePickerScreen extends StatefulWidget {
 class _InstancePickerScreenState extends State<InstancePickerScreen> {
   bool _refreshing = false;
 
-  RemoteController get controller => widget.controller;
+  RemoteHub get controller => widget.controller;
 
   @override
   void initState() {
@@ -106,8 +108,22 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
       listenable: controller,
       builder: (context, _) {
         final doc = controller.instanceStore.doc;
-        return Scaffold(
+        final hasCurrent = controller.session != null;
+        final currentKey = controller.current?.key;
+        return PopScope(
+          // With an instance behind the picker, Back returns to it.
+          canPop: !hasCurrent,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) controller.hideInstances();
+          },
+          child: Scaffold(
           appBar: AppBar(
+            leading: hasCurrent
+                ? BackButton(
+                    key: const Key('instances-back'),
+                    onPressed: controller.hideInstances,
+                  )
+                : null,
             title: const Text('Instances'),
             actions: [
               IconButton(
@@ -149,12 +165,14 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
                               if (i.machineHost == machine.host) i,
                           ],
                           store: controller.instanceStore,
+                          currentKey: currentKey,
                           onTap: (inst) => controller.connect(inst),
                           onForgetInstance: _forgetInstance,
                           onForgetMachine: () => _forgetMachine(machine),
                         ),
                     ],
                   ),
+          ),
           ),
         );
       },
@@ -166,6 +184,7 @@ class _MachineSection extends StatelessWidget {
   final MachineRecord machine;
   final List<InstanceRecord> instances;
   final InstanceStore store;
+  final InstanceKey? currentKey;
   final void Function(InstanceRecord inst) onTap;
   final void Function(InstanceRecord inst) onForgetInstance;
   final VoidCallback onForgetMachine;
@@ -174,6 +193,7 @@ class _MachineSection extends StatelessWidget {
     required this.machine,
     required this.instances,
     required this.store,
+    required this.currentKey,
     required this.onTap,
     required this.onForgetInstance,
     required this.onForgetMachine,
@@ -202,6 +222,7 @@ class _MachineSection extends StatelessWidget {
           _InstanceRow(
             inst: inst,
             chip: store.chipFor(inst),
+            isCurrent: inst.key == currentKey,
             onTap: () => onTap(inst),
             onLongPress: () => onForgetInstance(inst),
           ),
@@ -218,12 +239,14 @@ class _MachineSection extends StatelessWidget {
 class _InstanceRow extends StatelessWidget {
   final InstanceRecord inst;
   final InstanceChip chip;
+  final bool isCurrent;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
   const _InstanceRow({
     required this.inst,
     required this.chip,
+    required this.isCurrent,
     required this.onTap,
     required this.onLongPress,
   });
@@ -234,6 +257,7 @@ class _InstanceRow extends StatelessWidget {
       key: ValueKey(
         'instance-${inst.machineHost}-${inst.workspaceId ?? inst.url}',
       ),
+      selected: isCurrent,
       title: Text(inst.displayName),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -246,7 +270,12 @@ class _InstanceRow extends StatelessWidget {
               'Last seen ${inst.lastSeen}',
               style: Theme.of(context).textTheme.labelSmall,
             ),
-          if (chip == InstanceChip.inUse)
+          if (isCurrent)
+            Text(
+              'current instance',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          if (chip == InstanceChip.inUse && !isCurrent)
             Text(
               'another device is connected — connecting will replace it',
               style: Theme.of(context).textTheme.labelSmall,

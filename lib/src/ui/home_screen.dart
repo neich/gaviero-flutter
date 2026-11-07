@@ -2,8 +2,9 @@
 /// Conversations) over one navigator per section. A section is built the
 /// first time it is opened and then stays mounted, so switching back lands
 /// on the same folder tree, open file, shell tab and draft, or conversation
-/// scroll position. The screen is keyed by instance in `main.dart`: another
-/// workspace starts from fresh sections.
+/// scroll position. One home screen exists per instance the hub keeps
+/// (`app_shell.dart`), so switching instances and back keeps all of that too.
+/// The bar's leading button opens the instance picker from any section.
 library;
 
 import 'package:flutter/material.dart';
@@ -30,7 +31,19 @@ enum HomeSection {
 class HomeScreen extends StatefulWidget {
   final RemoteController controller;
 
-  const HomeScreen({super.key, required this.controller});
+  /// False while another instance or the picker is shown: this screen stays
+  /// mounted but ignores Back.
+  final bool active;
+
+  /// Opens the instance picker; null hides the bar's Instances button.
+  final VoidCallback? onShowInstances;
+
+  const HomeScreen({
+    super.key,
+    required this.controller,
+    this.active = true,
+    this.onShowInstances,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -115,10 +128,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Every kept home screen registers with the same route, and the route
+    // asks all of them: only the shown one handles Back.
     return PopScope(
-      canPop: false,
+      canPop: !widget.active,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _back();
+        if (!didPop && widget.active) _back();
       },
       child: Material(
         color: Theme.of(context).scaffoldBackgroundColor,
@@ -129,6 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
               builder: (context, _) => _SectionBar(
                 selected: _section,
                 onSelected: _select,
+                onShowInstances: widget.onShowInstances,
                 // Waiting permissions stay visible from Files and Shells.
                 conversationAlerts: controller.state.openPermissions.length,
               ),
@@ -176,11 +192,13 @@ class _HomeScreenState extends State<HomeScreen> {
 class _SectionBar extends StatelessWidget {
   final HomeSection selected;
   final ValueChanged<HomeSection> onSelected;
+  final VoidCallback? onShowInstances;
   final int conversationAlerts;
 
   const _SectionBar({
     required this.selected,
     required this.onSelected,
+    required this.onShowInstances,
     required this.conversationAlerts,
   });
 
@@ -195,6 +213,15 @@ class _SectionBar extends StatelessWidget {
           height: 44,
           child: Row(
             children: [
+              if (onShowInstances != null)
+                IconButton(
+                  key: const Key('section-instances'),
+                  tooltip: 'Instances',
+                  icon: const Icon(Icons.dns_outlined, size: 20),
+                  color: scheme.onSurfaceVariant,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onShowInstances,
+                ),
               for (final section in HomeSection.values)
                 Expanded(
                   child: _SectionButton(

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gaviero_remote/src/services/instance_store.dart';
 import 'package:gaviero_remote/src/services/kv.dart';
 import 'package:gaviero_remote/src/services/secure_store.dart';
-import 'package:gaviero_remote/src/state/controller.dart';
+import 'package:gaviero_remote/src/state/hub.dart';
 import 'package:gaviero_remote/src/transport/connection.dart';
 
 import 'support/relay_machine.dart';
@@ -52,9 +52,9 @@ void main() {
       () async {
     final store = InstanceStore(kv: MemoryKv());
     await store.load();
-    final controller = RemoteController(
+    final controller = RemoteHub(
       instanceStore: store,
-      connection: _offlineConnection(),
+      connectionFactory: _offlineConnection,
     );
     await controller.pair(const PairingConfig(
       url: 'wss://a-host.example/v1/ws',
@@ -75,7 +75,9 @@ void main() {
       relayHost: testRelayHost,
       relaySecret: testRelaySecret,
     ));
-    await controller.connection.stop();
+    for (final s in controller.sessions) {
+      await s.connection.stop();
+    }
     expect(store.doc.machines, hasLength(1));
     expect(store.doc.machines.single.token, 'rotated');
     expect(store.doc.machines.single.needsPairing, isFalse);

@@ -146,9 +146,17 @@ command, the conversation and scroll position — so switching back lands where
 you left off. A section is loaded the first time you open it; a hidden Shells
 section stops polling. After a reconnect, Files reopens the folders that were
 open and Shells returns to the same tab. Back closes what the section opened,
-then returns to Conversations. Picking another instance starts from fresh
-sections. Conversations shows a badge for permission requests while you are
-in another section.
+then returns to Conversations. Conversations shows a badge for permission
+requests while you are in another section.
+
+The server icon at the left of the bar opens the instance picker from any
+section; Back returns to the instance you came from, untouched. Every
+instance keeps its sections and conversations when you switch away, so
+coming back lands where you left off. Only the instance on screen holds a
+connection: the one you leave disconnects (so it never displaces another
+device), and reconnects with a fresh snapshot when you return. The four most
+recently used instances are kept, in memory only — a cold start opens the
+last instance with fresh sections.
 
 ## Explorer
 
