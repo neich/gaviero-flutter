@@ -3,11 +3,8 @@ import 'package:app_links/app_links.dart';
 
 import 'src/services/deep_link.dart';
 import 'src/services/notifications.dart';
-import 'src/state/controller.dart';
-import 'src/transport/connection.dart';
-import 'src/ui/home_screen.dart';
-import 'src/ui/instance_picker_screen.dart';
-import 'src/ui/pairing_screen.dart';
+import 'src/state/hub.dart';
+import 'src/ui/app_shell.dart';
 import 'src/ui/theme.dart';
 
 void main() {
@@ -24,21 +21,20 @@ class GavieroRemoteApp extends StatefulWidget {
 
 class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     with WidgetsBindingObserver {
-  late final RemoteController _controller;
+  late final RemoteHub _hub;
   final _notifications = NotificationService();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _controller = RemoteController();
-    _controller.state.onPermissionRequested =
-        _notifications.onPermissionRequested;
-    _controller.state.onStreamingEnded = _notifications.onStreamingEnded;
-    _controller.addListener(_syncNotificationContext);
+    _hub = RemoteHub()
+      ..onPermissionRequested = _notifications.onPermissionRequested
+      ..onStreamingEnded = _notifications.onStreamingEnded;
+    _hub.addListener(_syncNotificationContext);
     _notifications.onTap = _onNotificationTap;
     _notifications.initialize();
-    _controller.initialize();
+    _hub.initialize();
     _listenDeepLinks();
   }
 
@@ -50,7 +46,7 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
   Future<void> _onDeepLink(Uri uri) async {
     final target = parseGavieroRemoteOpen(uri);
     if (target == null) return;
-    await _controller.openNotificationTarget(
+    await _hub.openNotificationTarget(
       machineHost: target.host,
       workspaceId: target.workspaceId,
       convId: target.convId,
@@ -58,22 +54,23 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
   }
 
   void _syncNotificationContext() {
-    final current = _controller.current;
+    final current = _hub.current;
     _notifications.context.machineHost = current?.machineHost;
     _notifications.context.workspaceId = current?.workspaceId;
     _notifications.context.workspaceName = current?.displayName;
     // Every machine is paired through gaviero-relay, whose alert service
     // already covers finished/waiting turns.
     _notifications.context.relayCovered = current != null;
+    final state = _hub.session?.state;
     _notifications.context.conversationTitle = (convId) =>
-        _controller.state.conversation(convId)?.summary.title ?? convId;
+        state?.conversation(convId)?.summary.title ?? convId;
   }
 
   Future<void> _onNotificationTap(String payload) async {
     final decoded = NotificationService.decodePayload(payload);
     if (decoded == null) return;
     final (host, workspaceId, convId) = decoded;
-    await _controller.openNotificationTarget(
+    await _hub.openNotificationTarget(
       machineHost: host,
       workspaceId: workspaceId,
       convId: convId,
@@ -86,7 +83,7 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     // Backgrounding kills the socket after the server's 60 s idle cull —
     // routine, not an error. Reconnect silently on resume (§3.7).
     if (state == AppLifecycleState.resumed) {
-      _controller.onAppResumed();
+      _hub.onAppResumed();
     }
   }
 
@@ -95,37 +92,15 @@ class _GavieroRemoteAppState extends State<GavieroRemoteApp>
     return MaterialApp(
       title: 'Gaviero Remote',
       theme: buildTheme(),
-      home: ListenableBuilder(
-        listenable: _controller,
-        builder: (context, _) {
-          final needsHost = _controller.needsPairingHost;
-          if (needsHost != null ||
-              _controller.connection.phase == ConnectionPhase.unauthorized) {
-            return PairingScreen(
-              controller: _controller,
-              forMachine: needsHost ?? _controller.current?.machineHost,
-            );
-          }
-          final current = _controller.current;
-          if (current != null) {
-            // Keyed by instance: another workspace starts from fresh
-            // sections instead of the previous one's tree and shell tabs.
-            return HomeScreen(
-              key: ValueKey(current.key),
-              controller: _controller,
-            );
-          }
-          return InstancePickerScreen(controller: _controller);
-        },
-      ),
+      home: RemoteShell(hub: _hub),
     );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _controller.removeListener(_syncNotificationContext);
-    _controller.dispose();
+    _hub.removeListener(_syncNotificationContext);
+    _hub.dispose();
     super.dispose();
   }
 }

@@ -88,13 +88,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
               ],
             ),
-            // Files and Shells live in the home screen's section bar.
+            // Files, Shells and the instance picker live in the home
+            // screen's section bar.
             actions: [
-              IconButton(
-                tooltip: 'Instances',
-                icon: const Icon(Icons.dns_outlined),
-                onPressed: () => controller.disconnect(),
-              ),
               if (controller.state.otherPermissionCount > 0)
                 IconButton(
                   tooltip: 'Open permission on another tab',
@@ -138,14 +134,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               PopupMenuButton<String>(
-                onSelected: (choice) async {
+                onSelected: (choice) {
                   switch (choice) {
                     case 'follow':
                       controller.state.setFollowDesktop(
                         !controller.state.followDesktop,
                       );
-                    case 'instances':
-                      await controller.disconnect();
                   }
                 },
                 itemBuilder: (context) => [
@@ -153,10 +147,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     value: 'follow',
                     checked: controller.state.followDesktop,
                     child: const Text('Follow desktop'),
-                  ),
-                  const PopupMenuItem(
-                    value: 'instances',
-                    child: Text('Instances'),
                   ),
                 ],
               ),

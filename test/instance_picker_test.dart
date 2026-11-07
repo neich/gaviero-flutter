@@ -6,20 +6,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gaviero_remote/src/services/directory_client.dart';
 import 'package:gaviero_remote/src/services/instance_store.dart';
 import 'package:gaviero_remote/src/services/kv.dart';
-import 'package:gaviero_remote/src/state/controller.dart';
+import 'package:gaviero_remote/src/state/hub.dart';
 import 'package:gaviero_remote/src/transport/connection.dart';
 import 'package:gaviero_remote/src/ui/instance_picker_screen.dart';
 
 import 'support/relay_machine.dart';
 
-RemoteController _controllerWith(StoreDocument doc) {
+RemoteHub _controllerWith(StoreDocument doc) {
   final store = InstanceStore(kv: MemoryKv())..doc = doc;
-  return RemoteController(
+  return RemoteHub(
     instanceStore: store,
     directoryClient: DirectoryClient(
       fetch: (url, token) async => const DirectoryFetchResult(404, ''),
     ),
-    connection: RemoteConnection(
+    connectionFactory: () => RemoteConnection(
       connector: (url, token) async {
         throw StateError('offline');
       },
@@ -91,7 +91,7 @@ void main() {
     await tester.pump();
     expect(controller.current?.workspaceId, 'w2');
     expect(controller.current?.displayName, 'notes');
-    await controller.connection.stop();
+    await controller.session!.connection.stop();
   });
 
   testWidgets('forgetting an instance removes only that row', (tester) async {
