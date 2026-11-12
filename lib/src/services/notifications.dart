@@ -1,5 +1,6 @@
-/// Local notifications (B10 / Plan D D5): fire on `permission_request` and
-/// `streaming_ended` while the app is backgrounded. Payload is
+/// Local notifications (B10 / Plan D D5): fire on `permission_request`
+/// (channel [AlertChannel.waiting]) and `streaming_ended`
+/// ([AlertChannel.finished]) while the app is backgrounded. Payload is
 /// `"<machineHost>|<workspaceId>|<convId>"` so a tap can switch instance
 /// and tab. This intentionally does NOT fight Android doze — the socket
 /// dying in deep sleep is expected, and always-on alerting is server-side
@@ -9,6 +10,46 @@ library;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../protocol/protocol.dart';
+
+/// The two Android notification channels agent alerts post to. Android sets
+/// sound, vibration and importance per channel, so splitting them lets the
+/// user give "agent needs you" and "turn finished" different sounds in the
+/// system settings. The native relay service (`RelayAlertService.kt`) uses the
+/// same ids and names — keep them in step.
+enum AlertChannel {
+  /// Permission prompts and questions: the turn is blocked on the user.
+  waiting(
+    'gaviero_agent_waiting',
+    'Agent needs you',
+    'The agent is waiting for a permission or an answer',
+  ),
+
+  /// A turn ended (its changes may be waiting for turn review).
+  finished(
+    'gaviero_turn_finished',
+    'Turn finished',
+    'An agent turn ended; its changes may need review',
+  );
+
+  const AlertChannel(this.id, this.name, this.description);
+  final String id;
+  final String name;
+  final String description;
+
+  /// Channel ids used before the split; removed so they stop showing up in
+  /// the system notification settings.
+  static const legacyIds = ['gaviero_agent', 'gaviero_relay_alerts'];
+
+  NotificationDetails get details => NotificationDetails(
+        android: AndroidNotificationDetails(
+          id,
+          name,
+          channelDescription: description,
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      );
+}
 
 final class NotificationContext {
   String? machineHost;
@@ -47,22 +88,28 @@ final class NotificationService {
           },
         ) ??
         false;
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android != null) {
+      // Create both channels up front so each shows in the system settings
+      // (where its sound is chosen) before the first alert of that kind.
+      // Re-creating an existing channel keeps the user's sound choice.
+      for (final channel in AlertChannel.values) {
+        await android.createNotificationChannel(
+          AndroidNotificationChannel(
+            channel.id,
+            channel.name,
+            description: channel.description,
+            importance: Importance.high,
+          ),
+        );
+      }
+      for (final legacy in AlertChannel.legacyIds) {
+        await android.deleteNotificationChannel(channelId: legacy);
+      }
+      await android.requestNotificationsPermission();
+    }
   }
-
-  static const _details = NotificationDetails(
-    android: AndroidNotificationDetails(
-      'gaviero_agent',
-      'Agent activity',
-      channelDescription:
-          'The agent is waiting for input or finished a turn',
-      importance: Importance.high,
-      priority: Priority.high,
-    ),
-  );
 
   static String encodePayload(
           String machineHost, String? workspaceId, String convId) =>
@@ -110,13 +157,19 @@ final class NotificationService {
     return '$conversationTitle: the turn is complete';
   }
 
-  Future<void> _show(int id, String title, String body, String payload) async {
+  Future<void> _show(
+    AlertChannel channel,
+    int id,
+    String title,
+    String body,
+    String payload,
+  ) async {
     if (!_initialized || appIsForeground || context.relayCovered) return;
     await _plugin.show(
       id: id,
       title: title,
       body: body,
-      notificationDetails: _details,
+      notificationDetails: channel.details,
       payload: payload,
     );
   }
@@ -131,6 +184,7 @@ final class NotificationService {
       context.conversationTitle?.call(convId) ?? convId;
 
   Future<void> onPermissionRequested(PermissionRequest request) => _show(
+        AlertChannel.waiting,
         request.requestId.hashCode,
         permissionTitle(context.workspaceName),
         permissionBody(
@@ -141,6 +195,7 @@ final class NotificationService {
       );
 
   Future<void> onStreamingEnded(StreamingEnded ended) => _show(
+        AlertChannel.finished,
         ended.turnId.hashCode,
         streamingTitle(context.workspaceName, ended),
         streamingBody(

@@ -57,6 +57,20 @@ final class RelayAlerts {
     }
   }
 
+  /// Open Android's settings page for one alert channel (where its sound is
+  /// picked). Returns false when that page cannot be opened here.
+  Future<bool> openChannelSettings(String channelId) async {
+    if (!_enabled) return false;
+    try {
+      await _channel.invokeMethod<void>('openChannelSettings', channelId);
+      return true;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   /// Ask once for the battery-optimisation exemption (ntfy does the same;
   /// it keeps the stream alive under OEM battery managers).
   Future<void> requestBatteryExemption() async {
