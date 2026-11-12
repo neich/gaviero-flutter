@@ -27,10 +27,29 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _scroll = ScrollController();
 
+  /// True once the list is scrolled up away from the newest row, which shows
+  /// the jump-to-latest button.
+  final _awayFromLatest = ValueNotifier(false);
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_maybePage);
+    _scroll.addListener(_trackLatest);
+  }
+
+  void _trackLatest() {
+    // Reversed list: offset 0 is the newest row.
+    _awayFromLatest.value = _scroll.position.pixels > 240;
+  }
+
+  void _jumpToLatest() {
+    if (!_scroll.hasClients) return;
+    _scroll.animateTo(
+      0,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
   }
 
   void _maybePage() {
@@ -58,6 +77,33 @@ class _ChatScreenState extends State<ChatScreen> {
             turnReviews && conv != null && pendingReview == null
             ? controller.state.turnReviewResolutionFor(conv.summary.convId)
             : null;
+        final permission = controller.state.viewedPermissions.isEmpty
+            ? null
+            : controller.state.viewedPermissions.first;
+        // What the agent is waiting on is shown as the newest rows of the
+        // message list, not docked below it: the reply explaining a change
+        // or a question then scrolls together with the card, and a long
+        // card never squeezes the conversation out of view.
+        final actionRows = <Widget>[
+          if (pendingReview != null)
+            Padding(
+              key: ValueKey('row-turn-review-${pendingReview.turnId}'),
+              padding: const EdgeInsets.only(top: 6),
+              child: TurnReviewCard(
+                controller: controller,
+                review: pendingReview,
+              ),
+            ),
+          if (permission != null)
+            Padding(
+              key: ValueKey('row-permission-${permission.requestId}'),
+              padding: const EdgeInsets.only(top: 6),
+              child: PermissionCard(
+                controller: controller,
+                request: permission,
+              ),
+            ),
+        ];
         // The tab strip already names the conversation, so the title is the
         // instance (workspace / repo folder) this screen is connected to.
         final instanceName = controller.current?.displayName;
@@ -163,7 +209,39 @@ class _ChatScreenState extends State<ChatScreen> {
               Expanded(
                 child: conv == null
                     ? const Center(child: Text('No conversation'))
-                    : _MessageList(conv: conv, scroll: _scroll),
+                    : Stack(
+                        children: [
+                          _MessageList(
+                            conv: conv,
+                            scroll: _scroll,
+                            actionRows: actionRows,
+                          ),
+                          Positioned(
+                            right: 12,
+                            bottom: 12,
+                            child: ValueListenableBuilder<bool>(
+                              valueListenable: _awayFromLatest,
+                              builder: (context, away, _) => away
+                                  ? FloatingActionButton.small(
+                                      key: const Key('jump-to-latest'),
+                                      heroTag: null,
+                                      tooltip: actionRows.isEmpty
+                                          ? 'Jump to latest'
+                                          : 'Back to the pending card',
+                                      onPressed: _jumpToLatest,
+                                      child: Badge(
+                                        isLabelVisible: actionRows.isNotEmpty,
+                                        smallSize: 8,
+                                        child: const Icon(
+                                          Icons.arrow_downward,
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          ),
+                        ],
+                      ),
               ),
               if (resolvedReview != null)
                 TurnReviewResolvedBanner(
@@ -171,13 +249,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   onDismiss: () => controller.state.dismissTurnReviewResolution(
                     conv!.summary.convId,
                   ),
-                ),
-              if (pendingReview != null)
-                TurnReviewCard(controller: controller, review: pendingReview),
-              if (controller.state.viewedPermissions.isNotEmpty)
-                PermissionCard(
-                  controller: controller,
-                  request: controller.state.viewedPermissions.first,
                 ),
               Composer(controller: controller),
             ],
@@ -190,6 +261,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _scroll.dispose();
+    _awayFromLatest.dispose();
     super.dispose();
   }
 }
@@ -198,7 +270,18 @@ class _MessageList extends StatelessWidget {
   final ConversationData conv;
   final ScrollController scroll;
 
-  const _MessageList({required this.conv, required this.scroll});
+  /// Cards the agent is waiting on (turn review, permission / question),
+  /// oldest first, each with a stable key. They are the newest rows, below
+  /// the streaming bubble.
+  final List<Widget> actionRows;
+
+  const _MessageList({
+    required this.conv,
+    required this.scroll,
+    this.actionRows = const [],
+  });
+
+  static const _streamingKey = ValueKey('row-streaming');
 
   @override
   Widget build(BuildContext context) {
@@ -209,23 +292,37 @@ class _MessageList extends StatelessWidget {
             conv.liveToolCalls.isNotEmpty);
     final messages = conv.messages;
     final headerRows = conv.hasOlderMessages ? 1 : 0;
+    final actionCount = actionRows.length;
     final streamingRows = showStreaming ? 1 : 0;
-    final total = messages.length + headerRows + streamingRows;
+    final leadRows = actionCount + streamingRows;
+    final total = messages.length + headerRows + leadRows;
     return ListView.builder(
+      key: const Key('message-list'),
       controller: scroll,
       reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: total,
+      // A card appearing or going away shifts every index; follow the keyed
+      // rows so a card keeps its picked answers and the bubble its state.
+      findChildIndexCallback: (key) {
+        for (var i = 0; i < actionCount; i++) {
+          if (actionRows[i].key == key) return actionCount - 1 - i;
+        }
+        if (key == _streamingKey && showStreaming) return actionCount;
+        return null;
+      },
       itemBuilder: (context, index) {
         // reversed: index 0 is the newest row.
-        if (showStreaming && index == 0) {
+        if (index < actionCount) return actionRows[actionCount - 1 - index];
+        if (showStreaming && index == actionCount) {
           return StreamingBubble(
+            key: _streamingKey,
             text: conv.streamingText,
             status: conv.streamingStatus,
             toolCalls: conv.liveToolCalls,
           );
         }
-        final messageIndex = messages.length - 1 - (index - streamingRows);
+        final messageIndex = messages.length - 1 - (index - leadRows);
         if (messageIndex < 0) {
           return const Padding(
             padding: EdgeInsets.all(16),
