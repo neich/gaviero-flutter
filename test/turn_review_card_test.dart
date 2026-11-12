@@ -587,4 +587,126 @@ void main() {
             'next prompt.'),
         findsOneWidget);
   });
+
+  group('cards scroll with the conversation', () {
+    // The reply that explains the change / the question, then filler so the
+    // explanation starts well above the viewport.
+    final history = [
+      const Message(
+        seq: 1,
+        role: Role.assistant,
+        content: 'WHY: the parser needed a fix',
+        truncated: false,
+        toolCalls: [],
+        codeBlocks: [],
+      ),
+      for (var i = 2; i < 30; i++)
+        Message(
+          seq: i,
+          role: i.isEven ? Role.user : Role.assistant,
+          content: 'line $i',
+          truncated: false,
+          toolCalls: const [],
+          codeBlocks: const [],
+        ),
+    ];
+
+    Snapshot chatSnapshot({
+      List<TurnReview> reviews = const [],
+      List<PermissionRequest> permissions = const [],
+    }) =>
+        Snapshot(
+          revision: 1,
+          conversations: const [_summary],
+          activeId: 'c1',
+          activeConversation: ConversationState(
+            summary: _summary,
+            messages: history,
+            oldestSeq: 1,
+            hasOlderMessages: false,
+          ),
+          openPermissions: permissions,
+          openProposals: const [],
+          settings: const RemoteSettings(),
+          openTurnReviews: reviews,
+        );
+
+    const ask = PermissionRequest(
+      convId: 'c1',
+      requestId: 'req-ask',
+      toolName: 'AskUserQuestion',
+      description: 'The agent is asking for input',
+      input: {},
+      ask: Ask(questions: [
+        AskQuestion(
+          question: 'Which serializer?',
+          header: 'Serializer',
+          multiSelect: false,
+          options: [
+            AskOption(label: 'serde_json', description: 'existing'),
+            AskOption(label: 'simd-json', description: 'faster'),
+          ],
+        ),
+        AskQuestion(
+          question: 'Which suites?',
+          header: 'Tests',
+          multiSelect: true,
+          options: [
+            AskOption(label: 'unit', description: ''),
+            AskOption(label: 'integration', description: ''),
+          ],
+        ),
+      ]),
+    );
+
+    testWidgets('a turn review is a row of the message list', (tester) async {
+      final (controller, _) = (await tester.runAsync(connected))!;
+      controller.state.applyEnvelope(env(chatSnapshot(reviews: [review()])));
+      await tester.pumpWidget(
+          MaterialApp(home: ChatScreen(controller: controller)));
+
+      final list = find.byKey(const Key('message-list'));
+      expect(find.descendant(of: list, matching: find.byType(TurnReviewCard)),
+          findsOneWidget);
+      // Scrolling the conversation reaches the reply that explains why.
+      await tester.dragUntilVisible(
+          find.text('WHY: the parser needed a fix'), list, const Offset(0, 300));
+      expect(find.text('WHY: the parser needed a fix'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('jump-to-latest')));
+      await tester.pumpAndSettle();
+      expect(find.text('Accept all'), findsOneWidget);
+    });
+
+    testWidgets('picked answers survive scrolling up to the explanation',
+        (tester) async {
+      final (controller, socket) = (await tester.runAsync(connected))!;
+      controller.state.applyEnvelope(env(chatSnapshot(permissions: [ask])));
+      await tester.pumpWidget(
+          MaterialApp(home: ChatScreen(controller: controller)));
+
+      final list = find.byKey(const Key('message-list'));
+      expect(find.descendant(of: list, matching: find.text('Which suites?')),
+          findsOneWidget);
+      await tester.ensureVisible(find.text('simd-json'));
+      await tester.tap(find.text('simd-json'));
+      await tester.pump();
+
+      await tester.dragUntilVisible(
+          find.text('WHY: the parser needed a fix'), list, const Offset(0, 300));
+      expect(find.text('WHY: the parser needed a fix'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('jump-to-latest')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('jump-to-latest')), findsNothing);
+
+      final answer = find.widgetWithText(FilledButton, 'Answer');
+      await tester.ensureVisible(answer);
+      expect(tester.widget<FilledButton>(answer).onPressed, isNotNull);
+      await tester.tap(answer);
+      await tester.pump();
+      expect(lastPayload(socket, 'permission_decision')['answers'], [
+        [1],
+        <int>[],
+      ]);
+    });
+  });
 }

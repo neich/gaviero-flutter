@@ -35,8 +35,14 @@ class PermissionCard extends StatefulWidget {
   State<PermissionCard> createState() => _PermissionCardState();
 }
 
-class _PermissionCardState extends State<PermissionCard> {
+class _PermissionCardState extends State<PermissionCard>
+    with AutomaticKeepAliveClientMixin {
   late List<Set<int>> _selections;
+
+  // The card is a row of the chat's message list; scrolling up to read the
+  // explanation or an earlier question must not drop the picked answers.
+  @override
+  bool get wantKeepAlive => true;
   bool _sending = false;
   bool _showDenyNote = false;
   final _denyNote = TextEditingController();
@@ -181,14 +187,14 @@ class _PermissionCardState extends State<PermissionCard> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final request = widget.request;
     final scheme = Theme.of(context).colorScheme;
+    // No scroll view of its own: the chat's message list scrolls the card
+    // together with the reply that led to it.
     return Material(
       color: scheme.surfaceContainerHighest,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.55),
-        child: SingleChildScrollView(
+      child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,7 +286,6 @@ class _PermissionCardState extends State<PermissionCard> {
               ),
             ],
           ),
-        ),
       ),
     );
   }

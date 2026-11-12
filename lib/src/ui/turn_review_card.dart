@@ -29,8 +29,14 @@ class TurnReviewCard extends StatefulWidget {
   State<TurnReviewCard> createState() => _TurnReviewCardState();
 }
 
-class _TurnReviewCardState extends State<TurnReviewCard> {
+class _TurnReviewCardState extends State<TurnReviewCard>
+    with AutomaticKeepAliveClientMixin {
   bool _sending = false;
+
+  // The card is a row of the chat's message list; scrolling up to read why
+  // the files changed must not drop it (and an in-flight action) offscreen.
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void didUpdateWidget(TurnReviewCard old) {
@@ -54,6 +60,7 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final review = widget.review;
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
@@ -68,13 +75,12 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
     final anyRejectable = undecided.any((f) => f.revertible);
     final count = review.files.length;
     final left = undecided.length;
+    // No scroll view of its own: the host (the chat's message list, or the
+    // orphan-review list) scrolls the card together with what precedes it.
     return Material(
       key: const Key('turn-review-card'),
       color: scheme.surfaceContainerHighest,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.55),
-        child: SingleChildScrollView(
+      child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,7 +158,6 @@ class _TurnReviewCardState extends State<TurnReviewCard> {
               ),
             ],
           ),
-        ),
       ),
     );
   }
