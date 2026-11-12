@@ -100,6 +100,10 @@ final class InstanceRecord {
   /// Last probe returned 404 — a 1.0 desktop, still connectable.
   final bool lastUnknown;
 
+  /// When this device last opened the instance (UTC ISO-8601); null if it
+  /// never has. Orders the picker most recently used first.
+  final String? lastUsed;
+
   const InstanceRecord({
     required this.machineHost,
     this.workspaceId,
@@ -109,9 +113,14 @@ final class InstanceRecord {
     this.lastOnline = false,
     this.inUse = false,
     this.lastUnknown = false,
+    this.lastUsed,
   });
 
   InstanceKey get key => InstanceKey(machineHost, workspaceId);
+
+  /// [lastUsed] parsed; null when never used or unparseable.
+  DateTime? get lastUsedAt =>
+      lastUsed == null ? null : DateTime.tryParse(lastUsed!);
 
   InstanceRecord copyWith({
     String? workspaceId,
@@ -121,6 +130,7 @@ final class InstanceRecord {
     bool? lastOnline,
     bool? inUse,
     bool? lastUnknown,
+    String? lastUsed,
   }) =>
       InstanceRecord(
         machineHost: machineHost,
@@ -131,6 +141,7 @@ final class InstanceRecord {
         lastOnline: lastOnline ?? this.lastOnline,
         inUse: inUse ?? this.inUse,
         lastUnknown: lastUnknown ?? this.lastUnknown,
+        lastUsed: lastUsed ?? this.lastUsed,
       );
 
   Map<String, Object?> toJson() => {
@@ -142,6 +153,7 @@ final class InstanceRecord {
         'last_online': lastOnline,
         'in_use': inUse,
         'last_unknown': lastUnknown,
+        if (lastUsed != null) 'last_used': lastUsed,
       };
 
   factory InstanceRecord.fromJson(Map<String, Object?> json) => InstanceRecord(
@@ -153,6 +165,7 @@ final class InstanceRecord {
         lastOnline: json['last_online'] as bool? ?? false,
         inUse: json['in_use'] as bool? ?? false,
         lastUnknown: json['last_unknown'] as bool? ?? false,
+        lastUsed: json['last_used'] as String?,
       );
 }
 
@@ -307,6 +320,7 @@ final class InstanceStore {
         lastOnline: record.lastOnline,
         inUse: record.inUse,
         lastUnknown: record.lastUnknown,
+        lastUsed: record.lastUsed ?? prev.lastUsed,
       );
     } else {
       instances.add(record);
@@ -317,6 +331,20 @@ final class InstanceStore {
 
   Future<void> setLastInstance(InstanceKey key) async {
     doc = doc.copyWith(lastInstance: key);
+    await persist();
+  }
+
+  /// The user opened [key]: stamp its [InstanceRecord.lastUsed] and make it
+  /// the instance reconnected at startup, in one write.
+  Future<void> markUsed(InstanceKey key, {DateTime? at}) async {
+    final stamp = (at ?? DateTime.now()).toUtc().toIso8601String();
+    doc = doc.copyWith(
+      instances: [
+        for (final i in doc.instances)
+          i.key == key ? i.copyWith(lastUsed: stamp) : i
+      ],
+      lastInstance: key,
+    );
     await persist();
   }
 
