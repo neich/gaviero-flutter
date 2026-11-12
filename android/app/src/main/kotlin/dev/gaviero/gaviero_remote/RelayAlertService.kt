@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * A `specialUse` foreground service holds one HTTPS stream per relay
  * (`GET /v1/phone/stream?since=<id>`, NDJSON, keepalive every 25 s) and posts
- * a notification for every `notify` event. Tapping it opens
+ * a notification for every `notify` event — `agent_waiting` on
+ * [CHANNEL_WAITING], `agent_finished` on [CHANNEL_FINISHED]. Tapping it opens
  * `gaviero-remote://open?host=&workspace=&conv=` — the deep link the app
  * already handles. Plain `HttpURLConnection` + `org.json`: no libraries.
  *
@@ -53,13 +54,7 @@ class RelayAlertService : Service() {
             NotificationChannel(CHANNEL_SERVICE, "Alert connection", NotificationManager.IMPORTANCE_LOW)
                 .apply { description = "Keeps the connection that delivers agent alerts" },
         )
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERTS, "Agent alerts", NotificationManager.IMPORTANCE_HIGH)
-                .apply {
-                    description = "An agent finished or is waiting for you"
-                    enableVibration(true)
-                },
-        )
+        ensureAlertChannels(this)
         // Reconnect at once when the network (or the VPN) changes instead of
         // waiting for the read timeout, as ntfy does.
         val cm = getSystemService(ConnectivityManager::class.java)
@@ -226,7 +221,7 @@ class RelayAlertService : Service() {
             Intent(Intent.ACTION_VIEW, link).setPackage(packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val n = Notification.Builder(this, CHANNEL_ALERTS)
+        val n = Notification.Builder(this, if (waiting) CHANNEL_WAITING else CHANNEL_FINISHED)
             .setContentTitle(if (waiting) "$name · Agent needs you" else "$name · Agent finished")
             .setContentText(machine)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -255,12 +250,43 @@ class RelayAlertService : Service() {
     companion object {
         const val TAG = "GavieroRelay"
         private const val CHANNEL_SERVICE = "gaviero_relay_service_v2"
-        private const val CHANNEL_ALERTS = "gaviero_relay_alerts"
+        /**
+         * Alerts are split across two channels so Android can give each its
+         * own sound (sound is a per-channel setting). The Flutter side
+         * (`AlertChannel` in notifications.dart) uses the same ids and names.
+         */
+        const val CHANNEL_WAITING = "gaviero_agent_waiting"
+        const val CHANNEL_FINISHED = "gaviero_turn_finished"
+        /** Channel ids from before the split. */
+        private val LEGACY_CHANNELS = listOf("gaviero_relay_alerts", "gaviero_agent")
         private const val ID_ONGOING = 7301
         private const val PREFS = "gaviero_relay"
         const val KEY_CONFIG = "config"
 
         fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        /**
+         * Create both alert channels (a no-op for one that exists: the user's
+         * sound and importance choices are kept) and drop the legacy ones.
+         */
+        fun ensureAlertChannels(ctx: Context) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_WAITING, "Agent needs you", NotificationManager.IMPORTANCE_HIGH)
+                    .apply {
+                        description = "The agent is waiting for a permission or an answer"
+                        enableVibration(true)
+                    },
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_FINISHED, "Turn finished", NotificationManager.IMPORTANCE_HIGH)
+                    .apply {
+                        description = "An agent turn ended; its changes may need review"
+                        enableVibration(true)
+                    },
+            )
+            for (id in LEGACY_CHANNELS) nm.deleteNotificationChannel(id)
+        }
 
         /** Persist the config and (re)start or stop the service. */
         fun apply(ctx: Context, configJson: String) {

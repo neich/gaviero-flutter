@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import '../protocol/version.dart';
 import '../services/instance_store.dart';
+import '../services/notifications.dart';
 import '../services/secure_store.dart';
 import '../state/hub.dart';
 import 'pairing_screen.dart';
@@ -223,6 +224,52 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
     );
   }
 
+  /// One entry per alert channel; each opens Android's page for that
+  /// channel, where its sound is chosen.
+  Future<void> _showNotificationSounds() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text('Notification sounds'),
+              subtitle: Text('Each kind of alert can have its own sound.'),
+            ),
+            for (final channel in AlertChannel.values)
+              ListTile(
+                key: Key('channel-${channel.id}'),
+                leading: Icon(
+                  channel == AlertChannel.waiting
+                      ? Icons.front_hand_outlined
+                      : Icons.task_alt,
+                ),
+                title: Text(channel.name),
+                subtitle: Text(channel.description),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  Navigator.of(sheetContext).pop();
+                  final opened = await controller.relayAlerts
+                      .openChannelSettings(channel.id);
+                  if (!opened) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Open Android notification settings to change sounds.',
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -247,6 +294,12 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
                 : null,
             title: const Text('Instances'),
             actions: [
+              IconButton(
+                key: const Key('notification-sounds'),
+                tooltip: 'Notification sounds',
+                icon: const Icon(Icons.notifications_outlined),
+                onPressed: _showNotificationSounds,
+              ),
               IconButton(
                 tooltip: 'Pair a machine',
                 icon: const Icon(Icons.qr_code_2),

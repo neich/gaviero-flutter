@@ -34,6 +34,22 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(null)
                 }
+                "openChannelSettings" -> {
+                    // The system page for one alert channel, where its sound
+                    // is chosen. Only our own alert channels are accepted.
+                    val id = call.arguments as? String
+                    if (id != RelayAlertService.CHANNEL_WAITING && id != RelayAlertService.CHANNEL_FINISHED) {
+                        result.error("bad_channel", "unknown alert channel: $id", null)
+                    } else {
+                        RelayAlertService.ensureAlertChannels(this)
+                        startActivity(
+                            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                                .putExtra(Settings.EXTRA_CHANNEL_ID, id),
+                        )
+                        result.success(null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -41,6 +57,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Both alert channels exist from first launch, so their sounds can be
+        // set before the first alert (or with no relay configured at all).
+        RelayAlertService.ensureAlertChannels(this)
         // Debug builds only: `adb shell am start -n dev.gaviero.gaviero_remote/.MainActivity
         // --es relay_config '<json>'` configures the alert service without a QR
         // scan (used by the emulator end-to-end check).
