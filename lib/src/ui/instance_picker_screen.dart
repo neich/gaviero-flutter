@@ -1,7 +1,10 @@
-/// Instance picker (Plan D D3). Machines as sections, one row per known
-/// instance, pull-to-refresh, tap to connect, long-press to forget. Opened
-/// from any section's bar it covers the current instance, which stays
-/// connected and is marked here; Back returns to it unchanged.
+/// Instance picker. One list mixing every paired machine's instances, most
+/// recently used first, each row naming its machine; offline rows are
+/// greyed and removable. A Machines section below holds the per-machine
+/// actions (remove offline instances, forget machine). Pull-to-refresh, tap
+/// to connect, long-press to forget. Opened from any section's bar it
+/// covers the current instance, which stays connected and is marked here;
+/// Back returns to it unchanged.
 library;
 
 import 'package:flutter/material.dart';
@@ -12,6 +15,41 @@ import '../services/secure_store.dart';
 import '../state/hub.dart';
 import 'pairing_screen.dart';
 import 'scanner_screen.dart';
+
+/// Picker order across all machines: the current instance first, then
+/// instances this device has opened, most recently used first, then the
+/// never-opened ones by status (in use, reachable, offline). Stable, so
+/// store order breaks the remaining ties.
+List<InstanceRecord> orderForPicker(
+  List<InstanceRecord> instances,
+  InstanceStore store,
+  InstanceKey? currentKey,
+) {
+  int rank(InstanceRecord inst) => switch (store.chipFor(inst)) {
+        InstanceChip.inUse => 0,
+        InstanceChip.online ||
+        InstanceChip.unknown ||
+        InstanceChip.needsPairing => 1,
+        InstanceChip.offline => 2,
+      };
+
+  int compare(InstanceRecord a, InstanceRecord b) {
+    final aCurrent = a.key == currentKey, bCurrent = b.key == currentKey;
+    if (aCurrent != bCurrent) return aCurrent ? -1 : 1;
+    final aUsed = a.lastUsedAt, bUsed = b.lastUsedAt;
+    if (aUsed != null && bUsed != null) return bUsed.compareTo(aUsed);
+    if (aUsed != null) return -1;
+    if (bUsed != null) return 1;
+    return rank(a).compareTo(rank(b));
+  }
+
+  final indexed = [for (var i = 0; i < instances.length; i++) (i, instances[i])];
+  indexed.sort((a, b) {
+    final byOrder = compare(a.$2, b.$2);
+    return byOrder != 0 ? byOrder : a.$1.compareTo(b.$1);
+  });
+  return [for (final (_, inst) in indexed) inst];
+}
 
 class InstancePickerScreen extends StatefulWidget {
   final RemoteHub controller;
@@ -64,7 +102,7 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Forget this instance?'),
+        title: const Text('Remove this instance from the list?'),
         content: Text(inst.displayName),
         actions: [
           TextButton(
@@ -73,12 +111,42 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Forget'),
+            child: const Text('Remove'),
           ),
         ],
       ),
     );
     if (confirmed == true) await controller.forgetInstance(inst.key);
+  }
+
+  Future<void> _removeOffline(
+    MachineRecord machine,
+    List<InstanceRecord> offline,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove offline instances?'),
+        content: Text(
+          'Removes ${offline.length} offline instance'
+          '${offline.length == 1 ? '' : 's'} on ${machine.host} from the list.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    for (final inst in offline) {
+      await controller.forgetInstance(inst.key);
+    }
   }
 
   Future<void> _forgetMachine(MachineRecord machine) async {
@@ -100,6 +168,59 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
       ),
     );
     if (confirmed == true) await controller.forgetMachine(machine.host);
+  }
+
+  Widget _buildList(
+    BuildContext context,
+    StoreDocument doc,
+    InstanceKey? currentKey,
+  ) {
+    final store = controller.instanceStore;
+    bool isOffline(InstanceRecord inst) =>
+        inst.key != currentKey && store.chipFor(inst) == InstanceChip.offline;
+    final ordered = orderForPicker(doc.instances, store, currentKey);
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+        for (final inst in ordered)
+          _InstanceRow(
+            inst: inst,
+            chip: store.chipFor(inst),
+            isCurrent: inst.key == currentKey,
+            isOffline: isOffline(inst),
+            onTap: () => controller.connect(inst),
+            onLongPress: () => _forgetInstance(inst),
+            onRemove: () => _forgetInstance(inst),
+          ),
+        if (ordered.isEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Text('No instances yet — pull to refresh, or scan a QR.'),
+          ),
+        const Divider(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Text(
+            'Machines',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+        for (final machine in doc.machines)
+          _MachineTile(
+            machine: machine,
+            instanceCount: doc.instances
+                .where((i) => i.machineHost == machine.host)
+                .length,
+            offline: [
+              for (final i in doc.instances)
+                if (i.machineHost == machine.host && isOffline(i)) i,
+            ],
+            onForgetMachine: () => _forgetMachine(machine),
+            onRemoveOffline: (offline) => _removeOffline(machine, offline),
+          ),
+      ],
+    );
   }
 
   @override
@@ -152,26 +273,7 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
                       Center(child: Text('Pair a machine to get started.')),
                     ],
                   )
-                : ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      if (_refreshing)
-                        const LinearProgressIndicator(minHeight: 2),
-                      for (final machine in doc.machines)
-                        _MachineSection(
-                          machine: machine,
-                          instances: [
-                            for (final i in doc.instances)
-                              if (i.machineHost == machine.host) i,
-                          ],
-                          store: controller.instanceStore,
-                          currentKey: currentKey,
-                          onTap: (inst) => controller.connect(inst),
-                          onForgetInstance: _forgetInstance,
-                          onForgetMachine: () => _forgetMachine(machine),
-                        ),
-                    ],
-                  ),
+                : _buildList(context, doc, currentKey),
           ),
           ),
         );
@@ -180,58 +282,51 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
   }
 }
 
-class _MachineSection extends StatelessWidget {
+/// One paired machine in the Machines section, with its actions menu.
+class _MachineTile extends StatelessWidget {
   final MachineRecord machine;
-  final List<InstanceRecord> instances;
-  final InstanceStore store;
-  final InstanceKey? currentKey;
-  final void Function(InstanceRecord inst) onTap;
-  final void Function(InstanceRecord inst) onForgetInstance;
-  final VoidCallback onForgetMachine;
+  final int instanceCount;
 
-  const _MachineSection({
+  /// This machine's offline instances (never the current one).
+  final List<InstanceRecord> offline;
+  final VoidCallback onForgetMachine;
+  final void Function(List<InstanceRecord> offline) onRemoveOffline;
+
+  const _MachineTile({
     required this.machine,
-    required this.instances,
-    required this.store,
-    required this.currentKey,
-    required this.onTap,
-    required this.onForgetInstance,
+    required this.instanceCount,
+    required this.offline,
     required this.onForgetMachine,
+    required this.onRemoveOffline,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          title: Text(
-            machine.host,
-            style: Theme.of(context).textTheme.titleSmall,
+    return ListTile(
+      key: ValueKey('machine-${machine.host}'),
+      leading: const Icon(Icons.computer),
+      title: Text(machine.host),
+      subtitle: Text(
+        '$instanceCount instance${instanceCount == 1 ? '' : 's'}',
+      ),
+      trailing: PopupMenuButton<String>(
+        key: ValueKey('machine-menu-${machine.host}'),
+        onSelected: (choice) {
+          if (choice == 'forget') onForgetMachine();
+          if (choice == 'remove-offline') onRemoveOffline(offline);
+        },
+        itemBuilder: (context) => [
+          if (offline.isNotEmpty)
+            const PopupMenuItem(
+              value: 'remove-offline',
+              child: Text('Remove offline instances'),
+            ),
+          const PopupMenuItem(
+            value: 'forget',
+            child: Text('Forget machine'),
           ),
-          trailing: PopupMenuButton<String>(
-            onSelected: (choice) {
-              if (choice == 'forget') onForgetMachine();
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'forget', child: Text('Forget machine')),
-            ],
-          ),
-        ),
-        for (final inst in instances)
-          _InstanceRow(
-            inst: inst,
-            chip: store.chipFor(inst),
-            isCurrent: inst.key == currentKey,
-            onTap: () => onTap(inst),
-            onLongPress: () => onForgetInstance(inst),
-          ),
-        if (instances.isEmpty)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Text('No instances yet — pull to refresh, or scan a QR.'),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -240,31 +335,47 @@ class _InstanceRow extends StatelessWidget {
   final InstanceRecord inst;
   final InstanceChip chip;
   final bool isCurrent;
+
+  /// Offline and not the current instance: greyed, with a remove button.
+  final bool isOffline;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final VoidCallback onRemove;
 
   const _InstanceRow({
     required this.inst,
     required this.chip,
     required this.isCurrent,
+    required this.isOffline,
     required this.onTap,
     required this.onLongPress,
+    required this.onRemove,
   });
 
   @override
   Widget build(BuildContext context) {
+    final id = '${inst.machineHost}-${inst.workspaceId ?? inst.url}';
+    final grey = isOffline ? Theme.of(context).disabledColor : null;
     return ListTile(
-      key: ValueKey(
-        'instance-${inst.machineHost}-${inst.workspaceId ?? inst.url}',
-      ),
+      key: ValueKey('instance-$id'),
       selected: isCurrent,
+      textColor: grey,
+      iconColor: grey,
       title: Text(inst.displayName),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // The relay route (`<id>-<machine>.<relay host>`); the section
-          // header already names the machine.
-          Text(Uri.tryParse(inst.url)?.host ?? inst.url),
+          // Rows from every machine share one list, so each names its own.
+          Row(
+            key: ValueKey('instance-machine-$id'),
+            children: [
+              const Icon(Icons.computer, size: 14),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(inst.machineHost, overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
           if (inst.lastSeen != null)
             Text(
               'Last seen ${inst.lastSeen}',
@@ -282,7 +393,20 @@ class _InstanceRow extends StatelessWidget {
             ),
         ],
       ),
-      trailing: _Chip(chip: chip),
+      trailing: isOffline
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _Chip(chip: chip),
+                IconButton(
+                  key: ValueKey('remove-$id'),
+                  tooltip: 'Remove from list',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: onRemove,
+                ),
+              ],
+            )
+          : _Chip(chip: chip),
       onTap: onTap,
       onLongPress: onLongPress,
     );
@@ -304,6 +428,9 @@ class _Chip extends StatelessWidget {
     };
     return Chip(
       label: Text(label),
+      labelStyle: chip == InstanceChip.offline
+          ? TextStyle(color: Theme.of(context).disabledColor)
+          : null,
       visualDensity: VisualDensity.compact,
       side: BorderSide(color: color.withValues(alpha: 0.6)),
     );

@@ -170,7 +170,7 @@ final class RemoteHub extends ChangeNotifier {
     _showingInstances = false;
     _needsPairingHost = null;
     await _evictBeyondCap();
-    await instanceStore.setLastInstance(inst.key);
+    await instanceStore.markUsed(inst.key);
     notifyListeners();
     final machine = instanceStore.machine(inst.machineHost);
     if (machine == null || machine.needsPairing) return;

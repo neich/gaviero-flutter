@@ -107,4 +107,33 @@ void main() {
     expect(reloaded.doc.instances, hasLength(20));
     expect(reloaded.doc.instances.last.displayName, 'workspace 19');
   });
+
+  test('markUsed stamps lastUsed, survives upserts and reload', () async {
+    final kv = MemoryKv();
+    final store = InstanceStore(kv: kv);
+    await store.upsertMachine(const MachineRecord(
+      host: 'h',
+      token: 't',
+      pairedAt: '2026-09-09T00:00:00Z',
+      tlsCa: testTlsCa,
+      relayHost: testRelayHost,
+      relaySecret: testRelaySecret,
+    ));
+    const rec = InstanceRecord(
+      machineHost: 'h',
+      workspaceId: 'ws',
+      displayName: 'ws',
+      url: 'wss://ws-h/v1/ws',
+    );
+    await store.upsertInstance(rec);
+    await store.markUsed(rec.key, at: DateTime.utc(2026, 11, 12, 8));
+    // A directory refresh rewrites the record without lastUsed.
+    await store.upsertInstance(rec.copyWith(lastOnline: true));
+    final reloaded = InstanceStore(kv: kv);
+    await reloaded.load();
+    final inst = reloaded.instance(rec.key)!;
+    expect(inst.lastUsedAt, DateTime.utc(2026, 11, 12, 8));
+    expect(inst.lastOnline, isTrue);
+    expect(reloaded.doc.lastInstance, rec.key);
+  });
 }
