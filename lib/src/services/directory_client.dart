@@ -179,6 +179,7 @@ final class DirectoryClient {
             lastOnline: true,
             lastUnknown: false,
             inUse: info.clientConnected,
+            lastActivity: info.lastActivityAt,
           ),
           DateTime.tryParse(info.startedAt)?.toUtc(),
         );

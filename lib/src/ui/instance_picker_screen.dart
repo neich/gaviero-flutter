@@ -1,5 +1,5 @@
-/// Instance picker. One list mixing every paired machine's instances, most
-/// recently used first, each row naming its machine; offline rows are
+/// Instance picker. One list mixing every paired machine's instances, latest
+/// activity first, each row naming its machine; offline rows are
 /// greyed and removable. A Machines section below holds the per-machine
 /// actions (remove offline instances, forget machine). Pull-to-refresh, tap
 /// to connect, long-press to forget. Opened from any section's bar it
@@ -17,14 +17,15 @@ import '../state/hub.dart';
 import 'pairing_screen.dart';
 import 'scanner_screen.dart';
 
-/// Picker order across all machines: the current instance first, then
-/// instances this device has opened, most recently used first, then the
-/// never-opened ones by status (in use, reachable, offline). Stable, so
-/// store order breaks the remaining ties.
+/// Picker order across all machines: by the instance's latest event (a
+/// prompt sent, a permission request or question, a turn review, or a turn
+/// ending — stamped by the desktop, from desktop or phone), most recent
+/// first; then instances with no known event by status (in use, reachable,
+/// offline). Opening an instance does not move it, and the current one is
+/// marked, not pinned. Stable, so store order breaks the remaining ties.
 List<InstanceRecord> orderForPicker(
   List<InstanceRecord> instances,
   InstanceStore store,
-  InstanceKey? currentKey,
 ) {
   int rank(InstanceRecord inst) => switch (store.chipFor(inst)) {
         InstanceChip.inUse => 0,
@@ -35,12 +36,10 @@ List<InstanceRecord> orderForPicker(
       };
 
   int compare(InstanceRecord a, InstanceRecord b) {
-    final aCurrent = a.key == currentKey, bCurrent = b.key == currentKey;
-    if (aCurrent != bCurrent) return aCurrent ? -1 : 1;
-    final aUsed = a.lastUsedAt, bUsed = b.lastUsedAt;
-    if (aUsed != null && bUsed != null) return bUsed.compareTo(aUsed);
-    if (aUsed != null) return -1;
-    if (bUsed != null) return 1;
+    final aAt = a.lastActivityAt, bAt = b.lastActivityAt;
+    if (aAt != null && bAt != null) return bAt.compareTo(aAt);
+    if (aAt != null) return -1;
+    if (bAt != null) return 1;
     return rank(a).compareTo(rank(b));
   }
 
@@ -179,7 +178,7 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
     final store = controller.instanceStore;
     bool isOffline(InstanceRecord inst) =>
         inst.key != currentKey && store.chipFor(inst) == InstanceChip.offline;
-    final ordered = orderForPicker(doc.instances, store, currentKey);
+    final ordered = orderForPicker(doc.instances, store);
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
@@ -429,6 +428,12 @@ class _InstanceRow extends StatelessWidget {
               ),
             ],
           ),
+          if (inst.lastActivity != null)
+            Text(
+              'Last activity ${inst.lastActivity}',
+              key: ValueKey('instance-activity-$id'),
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
           if (inst.lastSeen != null)
             Text(
               'Last seen ${inst.lastSeen}',

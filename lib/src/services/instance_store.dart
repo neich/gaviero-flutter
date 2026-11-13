@@ -101,8 +101,13 @@ final class InstanceRecord {
   final bool lastUnknown;
 
   /// When this device last opened the instance (UTC ISO-8601); null if it
-  /// never has. Orders the picker most recently used first.
+  /// never has.
   final String? lastUsed;
+
+  /// The instance's latest event the directory reported (RFC 3339): a prompt
+  /// sent, a permission request or question, a turn review, or a turn end.
+  /// Orders the picker, most recent first. Kept across desktop restarts.
+  final String? lastActivity;
 
   const InstanceRecord({
     required this.machineHost,
@@ -114,6 +119,7 @@ final class InstanceRecord {
     this.inUse = false,
     this.lastUnknown = false,
     this.lastUsed,
+    this.lastActivity,
   });
 
   InstanceKey get key => InstanceKey(machineHost, workspaceId);
@@ -121,6 +127,10 @@ final class InstanceRecord {
   /// [lastUsed] parsed; null when never used or unparseable.
   DateTime? get lastUsedAt =>
       lastUsed == null ? null : DateTime.tryParse(lastUsed!);
+
+  /// [lastActivity] parsed; null when unknown or unparseable.
+  DateTime? get lastActivityAt =>
+      lastActivity == null ? null : DateTime.tryParse(lastActivity!);
 
   InstanceRecord copyWith({
     String? workspaceId,
@@ -131,6 +141,7 @@ final class InstanceRecord {
     bool? inUse,
     bool? lastUnknown,
     String? lastUsed,
+    String? lastActivity,
   }) =>
       InstanceRecord(
         machineHost: machineHost,
@@ -142,6 +153,7 @@ final class InstanceRecord {
         inUse: inUse ?? this.inUse,
         lastUnknown: lastUnknown ?? this.lastUnknown,
         lastUsed: lastUsed ?? this.lastUsed,
+        lastActivity: lastActivity ?? this.lastActivity,
       );
 
   Map<String, Object?> toJson() => {
@@ -154,6 +166,7 @@ final class InstanceRecord {
         'in_use': inUse,
         'last_unknown': lastUnknown,
         if (lastUsed != null) 'last_used': lastUsed,
+        if (lastActivity != null) 'last_activity': lastActivity,
       };
 
   factory InstanceRecord.fromJson(Map<String, Object?> json) => InstanceRecord(
@@ -166,6 +179,7 @@ final class InstanceRecord {
         inUse: json['in_use'] as bool? ?? false,
         lastUnknown: json['last_unknown'] as bool? ?? false,
         lastUsed: json['last_used'] as String?,
+        lastActivity: json['last_activity'] as String?,
       );
 }
 
@@ -321,12 +335,23 @@ final class InstanceStore {
         inUse: record.inUse,
         lastUnknown: record.lastUnknown,
         lastUsed: record.lastUsed ?? prev.lastUsed,
+        lastActivity: _later(record, prev)?.lastActivity,
       );
     } else {
       instances.add(record);
     }
     doc = doc.copyWith(instances: instances);
     await persist();
+  }
+
+  /// Whichever of [a] / [b] has the later [InstanceRecord.lastActivity]; a
+  /// restarted desktop reports none until its next event, so the stored one
+  /// is kept.
+  static InstanceRecord? _later(InstanceRecord a, InstanceRecord b) {
+    final at = a.lastActivityAt, bt = b.lastActivityAt;
+    if (at == null) return bt == null ? null : b;
+    if (bt == null) return a;
+    return at.isAfter(bt) ? a : b;
   }
 
   Future<void> setLastInstance(InstanceKey key) async {
