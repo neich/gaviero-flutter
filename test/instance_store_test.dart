@@ -136,4 +136,37 @@ void main() {
     expect(inst.lastOnline, isTrue);
     expect(reloaded.doc.lastInstance, rec.key);
   });
+
+  test('upsert keeps the later lastActivity, and it survives reload',
+      () async {
+    final kv = MemoryKv();
+    final store = InstanceStore(kv: kv);
+    await store.upsertMachine(const MachineRecord(
+      host: 'h',
+      token: 't',
+      pairedAt: '2026-09-09T00:00:00Z',
+      tlsCa: testTlsCa,
+      relayHost: testRelayHost,
+      relaySecret: testRelaySecret,
+    ));
+    const rec = InstanceRecord(
+      machineHost: 'h',
+      workspaceId: 'ws',
+      displayName: 'ws',
+      url: 'wss://ws-h/v1/ws',
+    );
+    await store.upsertInstance(
+        rec.copyWith(lastActivity: '2026-11-12T10:00:00Z'));
+    // A restarted desktop reports nothing yet; an older stamp never wins.
+    await store.upsertInstance(rec);
+    await store.upsertInstance(
+        rec.copyWith(lastActivity: '2026-11-12T09:00:00Z'));
+    expect(store.instance(rec.key)!.lastActivity, '2026-11-12T10:00:00Z');
+    await store.upsertInstance(
+        rec.copyWith(lastActivity: '2026-11-12T11:30:00Z'));
+    final reloaded = InstanceStore(kv: kv);
+    await reloaded.load();
+    expect(reloaded.instance(rec.key)!.lastActivityAt,
+        DateTime.utc(2026, 11, 12, 11, 30));
+  });
 }

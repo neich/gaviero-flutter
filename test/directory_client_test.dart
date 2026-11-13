@@ -31,6 +31,7 @@ Map<String, Object?> _info({
   required int port,
   bool inUse = false,
   String startedAt = '2026-09-09T11:58:03Z',
+  String? lastActivityAt,
 }) => {
   'instance_id': id,
   'workspace': {'id': workspaceId, 'display_name': name},
@@ -39,6 +40,7 @@ Map<String, Object?> _info({
   'tui_version': '0.1.0',
   'started_at': startedAt,
   'client_connected': inUse,
+  'last_activity_at': ?lastActivityAt,
 };
 
 InstanceStore _storeWith(
@@ -108,6 +110,50 @@ void main() {
       store.instance(const InstanceKey('alpha', 'old'))!.lastUnknown,
       isTrue,
     );
+  });
+
+  test('last_activity_at reaches the record; a later refresh without it keeps it',
+      () async {
+    final store = _storeWith([
+      const MachineRecord(
+        host: 'alpha',
+        token: 't',
+        directoryUrl: 'https://dir-alpha/v1/instances',
+        pairedAt: 'x',
+        tlsCa: testTlsCa,
+        relayHost: testRelayHost,
+        relaySecret: testRelaySecret,
+      ),
+    ]);
+    String? activity = '2026-11-12T10:00:00Z';
+    final client = DirectoryClient(
+      fetch: (url, token) async => DirectoryFetchResult(
+        200,
+        _dirBody(
+          host: 'alpha',
+          instances: [
+            _info(
+              id: 'a',
+              workspaceId: 'w',
+              name: 'ws',
+              url: 'wss://w-alpha/v1/ws',
+              port: 1,
+              lastActivityAt: activity,
+            ),
+          ],
+        ),
+      ),
+    );
+    const key = InstanceKey('alpha', 'w');
+    await client.refresh(store);
+    expect(store.instance(key)!.lastActivity, '2026-11-12T10:00:00Z');
+    // The desktop restarted: no event yet since.
+    activity = null;
+    await client.refresh(store);
+    expect(store.instance(key)!.lastActivity, '2026-11-12T10:00:00Z');
+    activity = '2026-11-12T11:00:00Z';
+    await client.refresh(store);
+    expect(store.instance(key)!.lastActivity, '2026-11-12T11:00:00Z');
   });
 
   test('an instance absent from this round stays and is offline', () async {

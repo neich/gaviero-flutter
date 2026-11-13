@@ -218,7 +218,7 @@ void main() {
     });
   });
 
-  test('orderForPicker ranks the current instance first even when offline', () {
+  test('orderForPicker: no known activity falls back to status', () {
     final store = InstanceStore(kv: MemoryKv())
       ..doc = StoreDocument(
         machines: const [
@@ -236,22 +236,13 @@ void main() {
     const unknown = InstanceRecord(machineHost: 'alpha', workspaceId: 'unk',
         displayName: 'unk', url: 'u3', lastUnknown: true);
     final names = [
-      for (final i in orderForPicker([off, unknown, on, used], store, null))
+      for (final i in orderForPicker([off, unknown, on, used], store))
         i.displayName,
     ];
     expect(names, ['used', 'unk', 'on', 'off']);
-    final withCurrent = [
-      for (final i in orderForPicker(
-        [on, used, off],
-        store,
-        const InstanceKey('alpha', 'off'),
-      ))
-        i.displayName,
-    ];
-    expect(withCurrent, ['off', 'used', 'on']);
   });
 
-  test('orderForPicker mixes machines, most recently used first', () {
+  test('orderForPicker mixes machines, latest activity first', () {
     final store = InstanceStore(kv: MemoryKv())
       ..doc = StoreDocument(
         machines: const [
@@ -263,32 +254,35 @@ void main() {
               relaySecret: testRelaySecret),
         ],
       );
-    const fresh = InstanceRecord(machineHost: 'alpha', workspaceId: 'fresh',
-        displayName: 'fresh', url: 'u0', lastOnline: true, inUse: true);
-    const oldOnline = InstanceRecord(machineHost: 'alpha',
-        workspaceId: 'oldOn', displayName: 'oldOn', url: 'u1',
-        lastOnline: true, lastUsed: '2026-11-01T10:00:00.000Z');
+    const quiet = InstanceRecord(machineHost: 'alpha', workspaceId: 'quiet',
+        displayName: 'quiet', url: 'u0', lastOnline: true, inUse: true);
+    // Opened most recently from this phone, but nothing happened there since.
+    const oldActivity = InstanceRecord(machineHost: 'alpha',
+        workspaceId: 'old', displayName: 'old', url: 'u1',
+        lastOnline: true, lastUsed: '2026-11-12T11:00:00.000Z',
+        lastActivity: '2026-11-01T10:00:00Z');
     const recentOffline = InstanceRecord(machineHost: 'beta',
         workspaceId: 'recentOff', displayName: 'recentOff', url: 'u2',
-        lastUsed: '2026-11-12T09:00:00.000Z');
+        lastActivity: '2026-11-12T09:00:00Z');
     const middle = InstanceRecord(machineHost: 'beta', workspaceId: 'mid',
         displayName: 'mid', url: 'u3', lastOnline: true,
-        lastUsed: '2026-11-05T09:00:00.000Z');
+        lastActivity: '2026-11-05T09:00:00Z');
     const neverOffline = InstanceRecord(machineHost: 'alpha',
-        workspaceId: 'never', displayName: 'never', url: 'u4');
+        workspaceId: 'never', displayName: 'never', url: 'u4',
+        lastUsed: '2026-11-12T12:00:00.000Z');
     final names = [
       for (final i in orderForPicker(
-        [neverOffline, fresh, oldOnline, recentOffline, middle],
+        [neverOffline, quiet, oldActivity, recentOffline, middle],
         store,
-        null,
       ))
         i.displayName,
     ];
-    // Recency beats status and machine; never-used ones follow by status.
-    expect(names, ['recentOff', 'mid', 'oldOn', 'fresh', 'never']);
+    // Activity beats status, machine and last use; the rest follow by status.
+    expect(names, ['recentOff', 'mid', 'old', 'quiet', 'never']);
   });
 
-  testWidgets('opening an instance moves it to the top', (tester) async {
+  testWidgets('opening an instance does not reorder; its activity does',
+      (tester) async {
     final controller = _controllerWith(_twoMachinesThreeInstances);
     await tester.pumpWidget(
       MaterialApp(home: InstancePickerScreen(controller: controller)),
@@ -297,16 +291,25 @@ void main() {
     expect(y('gaviero'), lessThan(y('flutter')));
     await tester.tap(find.text('flutter'));
     await tester.pump();
-    final used = controller.instanceStore.instance(
-      const InstanceKey('beta', 'w3'),
-    );
-    expect(used?.lastUsed, isNotNull);
-    expect(controller.instanceStore.doc.lastInstance,
-        const InstanceKey('beta', 'w3'));
+    final store = controller.instanceStore;
+    const key = InstanceKey('beta', 'w3');
+    expect(store.instance(key)?.lastUsed, isNotNull);
+    expect(store.doc.lastInstance, key);
     await controller.disconnect();
+    await tester.pump();
+    // Visiting alone leaves it where status put it.
+    expect(y('flutter'), greaterThan(y('notes')));
+    expect(y('flutter'), greaterThan(y('gaviero')));
+
+    // The desktop reports an event there: it moves to the top.
+    await store.upsertInstance(
+      store.instance(key)!.copyWith(lastActivity: '2026-11-12T10:00:00Z'),
+    );
+    await controller.refreshDirectory();
     await tester.pump();
     expect(y('flutter'), lessThan(y('notes')));
     expect(y('flutter'), lessThan(y('gaviero')));
+    expect(find.text('Last activity 2026-11-12T10:00:00Z'), findsOneWidget);
   });
 }
 

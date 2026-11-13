@@ -20,6 +20,11 @@ final class InstanceInfo {
   /// A mobile client is currently attached; connecting will replace it.
   final bool clientConnected;
 
+  /// 1.9: RFC 3339 time of the instance's latest prompt, permission request
+  /// or question, turn review, or turn end. Null from older desktops and
+  /// until the first such event since the instance started.
+  final String? lastActivityAt;
+
   const InstanceInfo({
     required this.instanceId,
     required this.workspace,
@@ -28,6 +33,7 @@ final class InstanceInfo {
     required this.tuiVersion,
     required this.startedAt,
     required this.clientConnected,
+    this.lastActivityAt,
   });
 
   factory InstanceInfo.fromJson(Map<String, Object?> json) => InstanceInfo(
@@ -39,6 +45,7 @@ final class InstanceInfo {
         tuiVersion: json['tui_version'] as String,
         startedAt: json['started_at'] as String,
         clientConnected: json['client_connected'] as bool,
+        lastActivityAt: json['last_activity_at'] as String?,
       );
 
   Map<String, Object?> toJson() => {
@@ -49,6 +56,7 @@ final class InstanceInfo {
         'tui_version': tuiVersion,
         'started_at': startedAt,
         'client_connected': clientConnected,
+        if (lastActivityAt != null) 'last_activity_at': lastActivityAt,
       };
 }
 
