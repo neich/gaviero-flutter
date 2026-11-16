@@ -1,7 +1,8 @@
 /// Wire protocol version, subprotocol, and paths — vendored from
 /// `protocol/protocol.schema.json` (Plan A owns 1.0, Plan C owns the 1.1
 /// additions, 1.2 adds turn review, 1.5 turn-review folders, 1.6 permission
-/// grants, 1.7 shell history, 1.8 skill completions; a codec test asserts
+/// grants, 1.7 shell history, 1.8 skill completions, 1.10 swarm activity; a
+/// codec test asserts
 /// these constants
 /// match the vendored schema).
 library;
@@ -31,7 +32,7 @@ final class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-const protocolVersion = ProtocolVersion(1, 9);
+const protocolVersion = ProtocolVersion(1, 10);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 
@@ -69,6 +70,10 @@ abstract final class Capability {
   /// 1.8: `request_skill_completions` lists catalog skills for a `$skill`
   /// invocation.
   static const skillCompletions = 'skill_completions';
+
+  /// 1.10: `request_swarm` reads the desktop SWARM panel's run — its agents,
+  /// their state, and one agent's output. Read-only.
+  static const swarmActivity = 'swarm_activity';
 }
 
 /// `before_seq` to send to a server without [Capability.latestPage]: 2^53 − 1,

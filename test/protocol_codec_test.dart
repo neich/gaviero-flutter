@@ -171,8 +171,17 @@ void main() {
       });
     }
 
-    test('there is a fixture for all 20 client frame types', () {
-      expect(fixtureNames('client'), hasLength(20));
+    test('there is a fixture for all 21 client frame types', () {
+      expect(fixtureNames('client'), hasLength(21));
+    });
+
+    test('1.10 request_swarm decodes; absent fields are omitted', () {
+      final request = ClientEnvelope.fromJson(
+        readFixture('client', 'request_swarm'),
+      ).payload as RequestSwarm;
+      expect(request.agentId, 'scout');
+      expect(request.outputToken, '3:17');
+      expect(const RequestSwarm().toPayloadJson(), <String, Object?>{});
     });
 
     test('1.8 request_skill_completions decodes; null limit is omitted', () {
