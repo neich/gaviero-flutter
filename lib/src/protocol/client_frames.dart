@@ -1,4 +1,4 @@
-/// Client → server frame payloads (20 types).
+/// Client → server frame payloads (21 types).
 library;
 
 import 'dto.dart' show PermissionGrant;
@@ -46,6 +46,10 @@ sealed class ClientPayload {
         'request_skill_completions' => RequestSkillCompletions(
           query: json['query'] as String,
           limit: json['limit'] as int?,
+        ),
+        'request_swarm' => RequestSwarm(
+          agentId: json['agent_id'] as String?,
+          outputToken: json['output_token'] as String?,
         ),
         _ => throw FormatException('unknown client frame type: $type'),
       };
@@ -124,6 +128,31 @@ final class RequestSkillCompletions extends ClientPayload {
   Map<String, Object?> toPayloadJson() {
     final map = <String, Object?>{'query': query};
     _put(map, 'limit', limit);
+    return map;
+  }
+}
+
+/// Requires [Capability.swarmActivity] (1.10). The completed result is
+/// `{run, selected_id, output}` — see `swarm_view.dart`.
+final class RequestSwarm extends ClientPayload {
+  /// Whose output to return; null (or an agent no longer in the run) ⇒ the
+  /// agent selected on the desktop.
+  final String? agentId;
+
+  /// `output.token` from the previous reply: unchanged output then comes
+  /// back as `unchanged: true` with no lines.
+  final String? outputToken;
+
+  const RequestSwarm({this.agentId, this.outputToken});
+
+  @override
+  String get frameType => 'request_swarm';
+
+  @override
+  Map<String, Object?> toPayloadJson() {
+    final map = <String, Object?>{};
+    _put(map, 'agent_id', agentId);
+    _put(map, 'output_token', outputToken);
     return map;
   }
 }
