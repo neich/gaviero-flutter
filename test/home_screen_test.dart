@@ -5,6 +5,7 @@ import 'package:gaviero_remote/src/ui/explorer_screen.dart';
 import 'package:gaviero_remote/src/ui/file_view_screen.dart';
 import 'package:gaviero_remote/src/ui/home_screen.dart';
 import 'package:gaviero_remote/src/ui/shell_screen.dart';
+import 'package:gaviero_remote/src/ui/swarm_screen.dart';
 
 import 'package:gaviero_remote/src/protocol/protocol.dart' show Role;
 
@@ -169,6 +170,39 @@ void main() {
       'ls -la',
     );
     expect(find.byType(ShellScreen), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(() => controller.connection.stop());
+    controller.dispose();
+  });
+
+  testWidgets('the Swarm section polls only while shown; a narrow bar names '
+      'only the selected section', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final (controller, socket) = (await tester.runAsync(
+      () => connected(capabilities: [..._capabilities, 'swarm_activity']),
+    ))!;
+    await tester.pumpWidget(
+      MaterialApp(home: HomeScreen(controller: controller, onShowInstances: () {})),
+    );
+    // 360 dp is too narrow for four labels: only Conversations is named.
+    expect(find.text('Conversations'), findsOneWidget);
+    expect(find.text('Swarm'), findsNothing);
+    expect(find.byTooltip('Swarm'), findsOneWidget);
+    expect(_count(socket, 'request_swarm'), 0);
+
+    await _open(tester, HomeSection.swarm);
+    expect(_shown(tester), HomeSection.swarm);
+    expect(find.byType(SwarmScreen), findsOneWidget);
+    expect(_count(socket, 'request_swarm'), 1);
+    expect(find.text('Conversations'), findsNothing);
+
+    await _open(tester, HomeSection.files);
+    final polls = _count(socket, 'request_swarm');
+    await tester.pump(const Duration(seconds: 3));
+    expect(_count(socket, 'request_swarm'), polls);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.runAsync(() => controller.connection.stop());

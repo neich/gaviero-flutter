@@ -1,5 +1,5 @@
 /// The connected app: a section bar that never goes away (Files, Shells,
-/// Conversations) over one navigator per section. A section is built the
+/// Swarm, Conversations) over one navigator per section. A section is built the
 /// first time it is opened and then stays mounted, so switching back lands
 /// on the same folder tree, open file, shell tab and draft, or conversation
 /// scroll position. One home screen exists per instance the hub keeps
@@ -16,10 +16,12 @@ import 'chat_screen.dart';
 import 'explorer_screen.dart';
 import 'link_actions.dart';
 import 'shell_screen.dart';
+import 'swarm_screen.dart';
 
 enum HomeSection {
   files('Files', Icons.folder_open),
   shells('Shells', Icons.terminal),
+  swarm('Swarm', Icons.hub_outlined),
   conversations('Conversations', Icons.chat_bubble_outline);
 
   final String label;
@@ -108,7 +110,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Back closes whatever the visible section pushed (a file, a review),
-  /// then returns from Files / Shells to Conversations, then leaves the app.
+  /// then returns from any other section to Conversations, then leaves the
+  /// app.
   void _back() {
     final navigator = _navigators[_section]!.currentState;
     if (navigator != null && navigator.canPop()) {
@@ -123,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _root(HomeSection section) => switch (section) {
     HomeSection.files => ExplorerScreen(controller: controller),
     HomeSection.shells => ShellScreen(controller: controller),
+    HomeSection.swarm => SwarmScreen(controller: controller),
     HomeSection.conversations => ChatScreen(controller: controller),
   };
 
@@ -145,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 selected: _section,
                 onSelected: _select,
                 onShowInstances: widget.onShowInstances,
-                // Waiting permissions stay visible from Files and Shells.
+                // Waiting permissions stay visible from the other sections.
                 conversationAlerts: controller.state.openPermissions.length,
               ),
             ),
@@ -211,30 +215,43 @@ class _SectionBar extends StatelessWidget {
         bottom: false,
         child: SizedBox(
           height: 44,
-          child: Row(
-            children: [
-              if (onShowInstances != null)
-                IconButton(
-                  key: const Key('section-instances'),
-                  tooltip: 'Instances',
-                  icon: const Icon(Icons.dns_outlined, size: 20),
-                  color: scheme.onSurfaceVariant,
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onShowInstances,
-                ),
-              for (final section in HomeSection.values)
-                Expanded(
-                  child: _SectionButton(
-                    section: section,
-                    selected: section == selected,
-                    badge: section == HomeSection.conversations &&
-                            section != selected
-                        ? conversationAlerts
-                        : 0,
-                    onTap: () => onSelected(section),
-                  ),
-                ),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // A narrow phone fits every label only on the selected
+              // section; the others show their icon (and say their name to
+              // screen readers and on long press).
+              final perSection = (constraints.maxWidth -
+                      (onShowInstances != null ? 48 : 0)) /
+                  HomeSection.values.length;
+              final labels = perSection >= 104;
+              return Row(
+                children: [
+                  if (onShowInstances != null)
+                    IconButton(
+                      key: const Key('section-instances'),
+                      tooltip: 'Instances',
+                      icon: const Icon(Icons.dns_outlined, size: 20),
+                      color: scheme.onSurfaceVariant,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onShowInstances,
+                    ),
+                  for (final section in HomeSection.values)
+                    Expanded(
+                      flex: !labels && section == selected ? 2 : 1,
+                      child: _SectionButton(
+                        section: section,
+                        selected: section == selected,
+                        showLabel: labels || section == selected,
+                        badge: section == HomeSection.conversations &&
+                                section != selected
+                            ? conversationAlerts
+                            : 0,
+                        onTap: () => onSelected(section),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -245,12 +262,14 @@ class _SectionBar extends StatelessWidget {
 class _SectionButton extends StatelessWidget {
   final HomeSection section;
   final bool selected;
+  final bool showLabel;
   final int badge;
   final VoidCallback onTap;
 
   const _SectionButton({
     required this.section,
     required this.selected,
+    required this.showLabel,
     required this.badge,
     required this.onTap,
   });
@@ -259,29 +278,27 @@ class _SectionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = selected ? scheme.primary : scheme.onSurfaceVariant;
-    return Semantics(
-      selected: selected,
-      button: true,
-      child: InkWell(
-        key: Key('section-${section.name}'),
-        onTap: onTap,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: selected ? scheme.primary : Colors.transparent,
-                width: 2,
-              ),
+    final button = InkWell(
+      key: Key('section-${section.name}'),
+      onTap: onTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected ? scheme.primary : Colors.transparent,
+              width: 2,
             ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Badge.count(
-                count: badge,
-                isLabelVisible: badge > 0,
-                child: Icon(section.icon, size: 18, color: color),
-              ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Badge.count(
+              count: badge,
+              isLabelVisible: badge > 0,
+              child: Icon(section.icon, size: 18, color: color),
+            ),
+            if (showLabel) ...[
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -296,9 +313,16 @@ class _SectionButton extends StatelessWidget {
                 ),
               ),
             ],
-          ),
+          ],
         ),
       ),
+    );
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: showLabel
+          ? button
+          : Tooltip(message: section.label, child: button),
     );
   }
 }

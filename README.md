@@ -139,12 +139,13 @@ show no suggestions.
 ## Sections
 
 A bar at the top of every connected screen switches between **Files**,
-**Shells**, and **Conversations**; it stays visible over opened files and
-reviews too. Each section keeps its state while you are elsewhere — the
+**Shells**, **Swarm**, and **Conversations**; it stays visible over opened
+files and reviews too. On a narrow phone only the selected section shows its
+name; the others show their icon (long-press for the name). Each section keeps its state while you are elsewhere — the
 expanded folders and open file, the selected shell tab and its unsent
 command, the conversation and scroll position — so switching back lands where
 you left off. A section is loaded the first time you open it; a hidden Shells
-section stops polling. After a reconnect, Files reopens the folders that were
+or Swarm section stops polling. After a reconnect, Files reopens the folders that were
 open and Shells returns to the same tab. Back closes what the section opened,
 then returns to Conversations. Conversations shows a badge for permission
 requests while you are in another section.
@@ -157,6 +158,26 @@ connection: the one you leave disconnects (so it never displaces another
 device), and reconnects with a fresh snapshot when you return. The four most
 recently used instances are kept, in memory only — a cold start opens the
 last instance with fresh sections.
+
+## Swarm
+
+The **Swarm** section mirrors the desktop SWARM panel (`Alt+W`), read-only:
+the script, its phase, tier and estimated cost, the running / queued / done /
+failed counts and the run-wide message; one row per agent with its state, tier
+(`C` cheap, `E` expensive), latest activity and run time; and below them the
+chosen agent's output — streamed text, tool calls, state changes and file
+writes, scrolled to the end until you scroll up. The header over the output
+names the agent and its `provider:model`, plus its branch and changed files
+once the run finishes. The expand button hides the agent rows.
+
+Until you tap an agent the output follows the computer's selection (which
+follows the agent that started last); tapping one never moves the desktop's,
+and the locate button returns to following it. The desktop runs one script at
+a time, so the section shows that run — after it ends, until the next starts.
+Scripts are started and stopped on the computer only. Polls once a second
+while the section is on screen and sends only output that changed (at most the
+newest 64 KiB). Needs a gaviero build that advertises `swarm_activity`
+(protocol 1.10); older desktops show an update message.
 
 ## Explorer
 
