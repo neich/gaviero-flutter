@@ -4,7 +4,8 @@
 /// actions (remove offline instances, forget machine). Pull-to-refresh, tap
 /// to connect, long-press to forget. Opened from any section's bar it
 /// covers the current instance, which stays connected and is marked here;
-/// Back returns to it unchanged.
+/// Back returns to it unchanged. A second tab lists the machines'
+/// `gaviero-cli` runs ([CliRunsTab]).
 library;
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import '../services/instance_store.dart';
 import '../services/notifications.dart';
 import '../services/secure_store.dart';
 import '../state/hub.dart';
+import 'cli_runs_tab.dart';
 import 'pairing_screen.dart';
 import 'scanner_screen.dart';
 
@@ -283,6 +285,8 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
           onPopInvokedWithResult: (didPop, _) {
             if (!didPop) controller.hideInstances();
           },
+          child: DefaultTabController(
+          length: 2,
           child: Scaffold(
           appBar: AppBar(
             leading: hasCurrent
@@ -291,7 +295,13 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
                     onPressed: controller.hideInstances,
                   )
                 : null,
-            title: const Text('Instances'),
+            title: const Text('Gaviero'),
+            bottom: const TabBar(
+              tabs: [
+                Tab(key: Key('tab-instances'), text: 'Instances'),
+                Tab(key: Key('tab-cli-runs'), text: 'CLI runs'),
+              ],
+            ),
             actions: [
               IconButton(
                 key: const Key('notification-sounds'),
@@ -315,17 +325,25 @@ class _InstancePickerScreenState extends State<InstancePickerScreen> {
             onPressed: _scan,
             child: const Icon(Icons.qr_code_scanner),
           ),
-          body: RefreshIndicator(
-            onRefresh: _refresh,
-            child: doc.machines.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: const [
-                      SizedBox(height: 120),
-                      Center(child: Text('Pair a machine to get started.')),
-                    ],
-                  )
-                : _buildList(context, doc, currentKey),
+          body: TabBarView(
+            children: [
+              RefreshIndicator(
+                onRefresh: _refresh,
+                child: doc.machines.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const [
+                          SizedBox(height: 120),
+                          Center(child: Text('Pair a machine to get started.')),
+                        ],
+                      )
+                    : _buildList(context, doc, currentKey),
+              ),
+              doc.machines.isEmpty
+                  ? const Center(child: Text('Pair a machine to get started.'))
+                  : CliRunsTab(controller: controller),
+            ],
+          ),
           ),
           ),
         );

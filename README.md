@@ -179,6 +179,23 @@ while the section is on screen and sends only output that changed (at most the
 newest 64 KiB). Needs a gaviero build that advertises `swarm_activity`
 (protocol 1.10); older desktops show an update message.
 
+## CLI runs
+
+The instances screen has two tabs: **Instances** and **CLI runs**. The CLI runs
+tab lists the `gaviero-cli` runs of every paired computer: script, folder,
+computer, state (running, completed, completed with failures, failed, or
+interrupted when the CLI process went away), start time and agent counts.
+Running ones come first, then the newest. Each computer keeps its newest 20. Tap
+a run to open it in the same view as the Swarm section: header, agent rows and
+the chosen agent's output. That view follows the agent that started last until
+you tap one. It is read-only.
+
+A computer serves its CLI runs through any running Gaviero window with remote
+on (`GET /v1/cli-runs`, protocol 1.11), so a run is visible only while one is
+open there. The tab polls every 3 s while shown, and an open run every second
+until it has finished. Computers on an older Gaviero, or not reachable, get a
+note under the list.
+
 ## Explorer
 
 The **Files** section is a read-only view of the desktop workspace. Root folders match the desktop explorer and `@` completion; tap a

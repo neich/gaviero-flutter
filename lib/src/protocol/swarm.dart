@@ -110,6 +110,13 @@ final class SwarmRun {
   final SwarmCounts counts;
   final List<SwarmAgent> agents;
 
+  /// 1.11, CLI runs only: the run's id, the folder it ran in, its state
+  /// (`running`, `interrupted`, …) and start time.
+  final String? id;
+  final String? folder;
+  final String? state;
+  final DateTime? startedAt;
+
   const SwarmRun({
     required this.runId,
     required this.script,
@@ -121,6 +128,10 @@ final class SwarmRun {
     this.message = '',
     this.counts = const SwarmCounts(),
     this.agents = const [],
+    this.id,
+    this.folder,
+    this.state,
+    this.startedAt,
   });
 
   factory SwarmRun.fromJson(Map<String, Object?> json) => SwarmRun(
@@ -137,9 +148,15 @@ final class SwarmRun {
       for (final a in (json['agents'] as List?) ?? const [])
         SwarmAgent.fromJson(a as Map<String, Object?>),
     ],
+    id: json['id'] as String?,
+    folder: json['folder'] as String?,
+    state: json['state'] as String?,
+    startedAt: json['started_at'] is String
+        ? DateTime.tryParse(json['started_at'] as String)?.toUtc()
+        : null,
   );
 
-  bool get failed => phase == 'failed';
+  bool get failed => phase == 'failed' || phase == 'interrupted';
 }
 
 enum SwarmLineKind {

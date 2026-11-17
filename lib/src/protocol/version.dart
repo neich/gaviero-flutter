@@ -1,7 +1,8 @@
 /// Wire protocol version, subprotocol, and paths — vendored from
 /// `protocol/protocol.schema.json` (Plan A owns 1.0, Plan C owns the 1.1
 /// additions, 1.2 adds turn review, 1.5 turn-review folders, 1.6 permission
-/// grants, 1.7 shell history, 1.8 skill completions, 1.10 swarm activity; a
+/// grants, 1.7 shell history, 1.8 skill completions, 1.10 swarm activity,
+/// 1.11 CLI runs; a
 /// codec test asserts
 /// these constants
 /// match the vendored schema).
@@ -32,13 +33,17 @@ final class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-const protocolVersion = ProtocolVersion(1, 10);
+const protocolVersion = ProtocolVersion(1, 11);
 const wsSubprotocol = 'gaviero.v1';
 const wsPath = '/v1/ws';
 
 /// `GET /v1/instances` (1.1) — on every instance listener, so any of a
 /// machine's relay routes lists all of its instances.
 const instancesPath = '/v1/instances';
+
+/// `GET /v1/cli-runs` (1.11) — the machine's `gaviero-cli` runs, on every
+/// instance listener; one run at `$cliRunsPath/<id>`.
+const cliRunsPath = '/v1/cli-runs';
 
 /// `hello.capabilities` entries (1.1). Feature-detect with these, never with
 /// the minor version.
@@ -74,6 +79,10 @@ abstract final class Capability {
   /// 1.10: `request_swarm` reads the desktop SWARM panel's run — its agents,
   /// their state, and one agent's output. Read-only.
   static const swarmActivity = 'swarm_activity';
+
+  /// 1.11: `GET /v1/cli-runs` lists the machine's `gaviero-cli` runs and
+  /// `GET /v1/cli-runs/<id>` reads one in the `request_swarm` shape.
+  static const cliRuns = 'cli_runs';
 }
 
 /// `before_seq` to send to a server without [Capability.latestPage]: 2^53 − 1,

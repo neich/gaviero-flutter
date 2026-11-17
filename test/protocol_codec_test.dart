@@ -66,6 +66,10 @@ void main() {
     test('instances path matches the schema (1.1)', () {
       expect(instancesPath, schema['instances_path']);
     });
+
+    test('CLI runs path matches the schema (1.11)', () {
+      expect(cliRunsPath, schema['cli_runs_path']);
+    });
   });
 
   group('1.1 additions (D1)', () {

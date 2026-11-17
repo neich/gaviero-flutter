@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../protocol/protocol.dart';
+import '../services/cli_runs_client.dart';
 import '../services/directory_client.dart';
 import '../services/instance_store.dart';
 import '../services/relay_alerts.dart';
@@ -25,6 +26,9 @@ final class RemoteHub extends ChangeNotifier {
 
   final InstanceStore instanceStore;
   final DirectoryClient directoryClient;
+
+  /// The machines' `gaviero-cli` runs (1.11), for the picker's CLI tab.
+  final CliRunsClient cliRunsClient;
   final RelayAlerts relayAlerts;
   final RemoteConnection Function() _newConnection;
 
@@ -44,10 +48,12 @@ final class RemoteHub extends ChangeNotifier {
   RemoteHub({
     InstanceStore? instanceStore,
     DirectoryClient? directoryClient,
+    CliRunsClient? cliRunsClient,
     RelayAlerts? relayAlerts,
     RemoteConnection Function()? connectionFactory,
   }) : instanceStore = instanceStore ?? InstanceStore(),
        directoryClient = directoryClient ?? DirectoryClient(),
+       cliRunsClient = cliRunsClient ?? CliRunsClient(),
        relayAlerts = relayAlerts ?? RelayAlerts(),
        _newConnection = connectionFactory ?? RemoteConnection.new;
 
