@@ -210,15 +210,6 @@ class _SwarmScreenState extends State<SwarmScreen> with WidgetsBindingObserver {
     _refresh();
   }
 
-  /// The agent's run time now: the reply's, ticking on for a running agent.
-  Duration? _elapsed(SwarmAgent agent) {
-    final elapsed = agent.elapsed;
-    if (elapsed == null || agent.status != SwarmAgentStatus.running) {
-      return elapsed;
-    }
-    return elapsed + DateTime.now().difference(_receivedAt);
-  }
-
   @override
   Widget build(BuildContext context) {
     final instanceName = widget.controller.current?.displayName;
@@ -279,12 +270,93 @@ class _SwarmScreenState extends State<SwarmScreen> with WidgetsBindingObserver {
             : 'Waiting for swarm activity…',
       );
     }
+    return SwarmRunView(
+      run: run,
+      selectedId: _selectedId,
+      receivedAt: _receivedAt,
+      expanded: _expanded,
+      outputAgent: _outputAgent,
+      hasOutput: _token != null,
+      lines: _lines,
+      truncated: _truncated,
+      scroll: _scroll,
+      onChoose: _choose,
+      followLabel: _agentId == null ? 'following the computer' : null,
+    );
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _connection.removeListener(_connectionChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    _scroll.dispose();
+    super.dispose();
+  }
+}
+
+/// A run as the Swarm section draws it: the header, one row per agent
+/// (hidden when [expanded]), whose output is shown, and that output. Shared
+/// by the Swarm section and a CLI run; the owner polls and keeps the state.
+class SwarmRunView extends StatelessWidget {
+  final SwarmRun run;
+  final String? selectedId;
+
+  /// When [run] arrived: running agents' times tick on from it.
+  final DateTime receivedAt;
+  final bool expanded;
+
+  /// Whose output [lines] are, and whether any reply carried it yet.
+  final String? outputAgent;
+  final bool hasOutput;
+  final List<SwarmOutputLine> lines;
+  final bool truncated;
+  final ScrollController scroll;
+  final void Function(String agentId) onChoose;
+
+  /// Shown beside the output's agent while the screen follows the run's
+  /// own choice; null once the user picked one.
+  final String? followLabel;
+
+  const SwarmRunView({
+    super.key,
+    required this.run,
+    required this.selectedId,
+    required this.receivedAt,
+    required this.expanded,
+    required this.outputAgent,
+    required this.hasOutput,
+    required this.lines,
+    required this.truncated,
+    required this.scroll,
+    required this.onChoose,
+    this.followLabel,
+  });
+
+  /// The agent's run time now: the reply's, ticking on for a running agent.
+  Duration? _elapsed(SwarmAgent agent) {
+    final elapsed = agent.elapsed;
+    if (elapsed == null || agent.status != SwarmAgentStatus.running) {
+      return elapsed;
+    }
+    return elapsed + DateTime.now().difference(receivedAt);
+  }
+
+  SwarmAgent? get _selectedAgent {
+    for (final agent in run.agents) {
+      if (agent.id == selectedId) return agent;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _RunHeader(run: run),
-          if (!_expanded && run.agents.isNotEmpty)
+          if (!expanded && run.agents.isNotEmpty)
             ConstrainedBox(
               constraints: BoxConstraints(
                 maxHeight: constraints.maxHeight * 0.4,
@@ -296,46 +368,36 @@ class _SwarmScreenState extends State<SwarmScreen> with WidgetsBindingObserver {
                     _AgentRow(
                       agent: agent,
                       elapsed: _elapsed(agent),
-                      selected: agent.id == _selectedId,
-                      onTap: () => _choose(agent.id),
+                      selected: agent.id == selectedId,
+                      onTap: () => onChoose(agent.id),
                     ),
                 ],
               ),
             ),
-          _OutputHeader(
-            agent: _selectedAgent(run),
-            followingDesktop: _agentId == null,
-          ),
-          Expanded(child: _output(context, run)),
+          _OutputHeader(agent: _selectedAgent, followLabel: followLabel),
+          Expanded(child: _output(context)),
         ],
       ),
     );
   }
 
-  SwarmAgent? _selectedAgent(SwarmRun run) {
-    for (final agent in run.agents) {
-      if (agent.id == _selectedId) return agent;
-    }
-    return null;
-  }
-
-  Widget _output(BuildContext context, SwarmRun run) {
-    final agent = _selectedAgent(run);
+  Widget _output(BuildContext context) {
+    final agent = _selectedAgent;
     final scheme = Theme.of(context).colorScheme;
     if (agent == null) {
       return const _Notice('No agent selected.');
     }
-    if (_lines.isEmpty) {
+    if (lines.isEmpty) {
       return _Notice(
         agent.status == SwarmAgentStatus.queued
             ? 'Queued. Output appears when it starts.'
-            : _outputAgent == agent.id && _token != null
+            : outputAgent == agent.id && hasOutput
             ? 'No output.'
             : 'Waiting for output…',
       );
     }
     final spans = <TextSpan>[
-      if (_truncated)
+      if (truncated)
         TextSpan(
           text: 'Earlier output is not shown.\n',
           style: TextStyle(
@@ -343,9 +405,9 @@ class _SwarmScreenState extends State<SwarmScreen> with WidgetsBindingObserver {
             fontStyle: FontStyle.italic,
           ),
         ),
-      for (final (i, line) in _lines.indexed)
+      for (final (i, line) in lines.indexed)
         TextSpan(
-          text: i == _lines.length - 1 ? line.text : '${line.text}\n',
+          text: i == lines.length - 1 ? line.text : '${line.text}\n',
           style: _lineStyle(line.kind, scheme),
         ),
     ];
@@ -354,7 +416,7 @@ class _SwarmScreenState extends State<SwarmScreen> with WidgetsBindingObserver {
       width: double.infinity,
       child: SingleChildScrollView(
         key: const Key('swarm-output'),
-        controller: _scroll,
+        controller: scroll,
         padding: const EdgeInsets.all(12),
         child: SelectableText.rich(
           TextSpan(
@@ -380,15 +442,15 @@ class _SwarmScreenState extends State<SwarmScreen> with WidgetsBindingObserver {
           fontFamily: codeFontFamily,
         ),
       };
+}
+
+/// A centred line of text in place of a run.
+class SwarmNotice extends StatelessWidget {
+  final String text;
+  const SwarmNotice(this.text, {super.key});
 
   @override
-  void dispose() {
-    _timer?.cancel();
-    _connection.removeListener(_connectionChanged);
-    WidgetsBinding.instance.removeObserver(this);
-    _scroll.dispose();
-    super.dispose();
-  }
+  Widget build(BuildContext context) => _Notice(text);
 }
 
 /// `12s`, `3m4s`, `1h2m` — the desktop table's format.
@@ -634,9 +696,9 @@ class _AgentRow extends StatelessWidget {
 /// run finished — its branch and the files it changed.
 class _OutputHeader extends StatelessWidget {
   final SwarmAgent? agent;
-  final bool followingDesktop;
+  final String? followLabel;
 
-  const _OutputHeader({required this.agent, required this.followingDesktop});
+  const _OutputHeader({required this.agent, required this.followLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -668,9 +730,9 @@ class _OutputHeader extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (followingDesktop)
+                if (followLabel != null)
                   Text(
-                    'following the computer',
+                    followLabel!,
                     style: TextStyle(fontSize: 11, color: scheme.outline),
                   ),
               ],
